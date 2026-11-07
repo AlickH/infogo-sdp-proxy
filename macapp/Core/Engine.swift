@@ -38,6 +38,7 @@ final class Engine: ObservableObject {
         self.api = SDPApiClient(base: cfg.serverBase, token: cfg.token)
         self.token = (cfg.token?.isEmpty == false) ? cfg.token : nil
         api.token = token
+        store.setConfigResources(cfg.resources ?? [])
     }
 
     func log(_ s: String) {

@@ -166,6 +166,7 @@ final class ProxyServer {
             await relay(stream, up)
         } catch {
             engine.log("[SOCKS] 处理失败: \(error)")
+            try? await stream.send(Data([0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
             conn.cancel()
         }
     }
@@ -174,6 +175,7 @@ final class ProxyServer {
 
     private func handleHTTP(_ conn: NWConnection) async {
         let stream = SocketStream(conn: conn)
+        var method = ""
         do {
             let head = try await readHTTPHeaders(stream)
             guard let text = String(data: head, encoding: .utf8) else { conn.cancel(); return }
@@ -181,7 +183,7 @@ final class ProxyServer {
             guard let first = lines.first else { conn.cancel(); return }
             let parts = first.split(separator: " ")
             guard parts.count >= 2 else { conn.cancel(); return }
-            let method = String(parts[0])
+            method = String(parts[0])
             let target = String(parts[1])
 
             if method == "CONNECT" {
@@ -194,7 +196,11 @@ final class ProxyServer {
                 return
             }
 
-            guard let url = URL(string: target), let host = url.host else { conn.cancel(); return }
+            guard let url = URL(string: target), let host = url.host else {
+                try? await stream.send(Data("HTTP/1.1 400 Bad Request\r\n\r\n".utf8))
+                conn.cancel()
+                return
+            }
             let port = UInt16(url.port ?? 80)
             let up = try await openUpstream(host: host, port: port)
             var originPath = url.path.isEmpty ? "/" : url.path
@@ -219,6 +225,8 @@ final class ProxyServer {
             await relay(stream, up)
         } catch {
             engine.log("[HTTP] 处理失败: \(error)")
+            // 与 Go 版一致：CONNECT 与 absolute-form 失败都回 502
+            try? await stream.send(Data("HTTP/1.1 502 Bad Gateway\r\n\r\n".utf8))
             conn.cancel()
         }
     }

@@ -9,6 +9,10 @@ struct Rule {
 /// 资源规则表：官方策略表 + 内置 + 学习结果
 final class RuleStore {
     private(set) var rules: [Rule] = []
+    private var builtinRules: [Rule] = RuleStore.builtinRules
+    private var configRules: [Rule] = []
+    private var policyRules: [Rule] = []
+    private var learnedRules: [Rule] = []
     private let lock = NSLock()
 
     static let builtinDirectDomains = ["app.cscec5b.com.cn"]
@@ -23,18 +27,40 @@ final class RuleStore {
 
     func replacePolicy(_ policy: [Rule]) {
         lock.lock(); defer { lock.unlock() }
-        var out = RuleStore.builtinRules
-        var seen = Set(out.map { "\($0.pattern)|\($0.resid)|\($0.ports)" })
-        for r in policy {
-            let key = "\(r.pattern)|\(r.resid)|\(r.ports)"
+        policyRules = policy
+        rebuildLocked()
+    }
+
+    /// 合并配置中的 resources（与 Go 版一致：builtin → config → policy）
+    func setConfigResources(_ entries: [ResourceEntry]) {
+        lock.lock(); defer { lock.unlock() }
+        configRules = entries.map { Rule(pattern: $0.domain, resid: $0.resid, ports: $0.ports ?? "") }
+        rebuildLocked()
+    }
+
+    func addLearned(host: String, resid: String) {
+        lock.lock(); defer { lock.unlock() }
+        learnedRules.append(Rule(pattern: host, resid: resid, ports: ""))
+        rebuildLocked()
+    }
+
+    private func rebuildLocked() {
+        var out: [Rule] = []
+        var seen = Set<String>()
+        for r in builtinRules + configRules + policyRules + learnedRules {
+            let key = "\(r.pattern.lowercased())|\(r.resid)|\(r.ports)"
             if seen.insert(key).inserted { out.append(r) }
         }
         rules = out
     }
 
-    func addLearned(host: String, resid: String) {
-        lock.lock(); defer { lock.unlock() }
-        rules.append(Rule(pattern: host, resid: resid, ports: ""))
+    /// 仅按显式直连名单判断（规则生成用，不做 DNS 解析）
+    func isExplicitDirect(_ host: String, directDomains: [String]) -> Bool {
+        let h = host.lowercased()
+        for d in (RuleStore.builtinDirectDomains + directDomains).map({ $0.lowercased() }) where !d.isEmpty {
+            if h == d || h.hasSuffix("." + d) { return true }
+        }
+        return false
     }
 
     func snapshot() -> [Rule] {

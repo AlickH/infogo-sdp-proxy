@@ -11,7 +11,7 @@ enum RuleText {
         for r in store.snapshot() {
             let p = r.pattern.lowercased()
             if p.isEmpty || seen.contains(p) { continue }
-            if store.isDirectDomain(p, directDomains: cfg.directDomains ?? []) { continue }
+            if store.isExplicitDirect(p, directDomains: cfg.directDomains ?? []) { continue }
             seen.insert(p)
             if p.contains("/") {
                 lines.append("IP-CIDR,\(p),no-resolve")
@@ -37,7 +37,7 @@ enum RuleText {
         for r in store.snapshot() {
             let p = r.pattern.lowercased()
             if p.isEmpty || seen.contains(p) { continue }
-            if store.isDirectDomain(p, directDomains: cfg.directDomains ?? []) { continue }
+            if store.isExplicitDirect(p, directDomains: cfg.directDomains ?? []) { continue }
             seen.insert(p)
             if p.contains("/") {
                 lines.append("IP-CIDR,\(p),no-resolve")
@@ -65,7 +65,7 @@ enum RuleText {
         for r in store.snapshot() {
             let p = r.pattern.lowercased()
             if p.isEmpty || seen.contains(p) { continue }
-            if store.isDirectDomain(p, directDomains: cfg.directDomains ?? []) { continue }
+            if store.isExplicitDirect(p, directDomains: cfg.directDomains ?? []) { continue }
             seen.insert(p)
             if p.contains("/") {
                 if let (ip, mask) = cidrToPac(p) { cidrs.append((ip, mask)) }
