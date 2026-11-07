@@ -159,7 +159,7 @@ struct MenuBarContent: View {
 
     private var scanningView: some View {
         QRContainer(url: model.qrURL, onScanned: model.onScanned)
-            .frame(width: 300, height: 460)
+            .frame(width: 300, height: 352)
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.18), lineWidth: 1))
     }
