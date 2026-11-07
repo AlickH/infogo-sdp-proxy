@@ -220,3 +220,14 @@ App 只提供本地 SOCKS5(11095) / HTTP(11096) 代理。没有 Surge/Clash 等�
 - 无审查/杀毒检测等模块
 - 网关证书不校验（与官方 isaproxy 一致）
 - Token 约 25 分钟~12 小时由服务端决定，失效后重新 `-login`
+
+
+## macOS 重装后图标显示为通用占位图
+
+LaunchServices 会缓存旧图标，重装到同一路径后可能仍显示占位图，执行：
+
+```bash
+./scripts/refresh-icon-cache.sh ~/Applications/SDP.app
+```
+
+内部会执行 `lsregister -f` + `touch`，然后重启 Finder。
