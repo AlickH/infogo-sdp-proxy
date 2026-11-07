@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SDP 代理</title>
+<link rel="icon" href="/favicon.ico" type="image/x-icon">
+<style>
+  :root { --bg:#f5f6f8; --card:#fff; --text:#1f2329; --muted:#8a919c; --ok:#12a150; --bad:#e5484d; --brand:#1664ff; --warn:#d97706; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+         background:var(--bg); color:var(--text); font-size:14px; }
+  .wrap { max-width:560px; margin:0 auto; padding:22px 20px 100px; }
+  header { display:flex; align-items:center; gap:10px; margin-bottom:14px; }
+  h1 { font-size:19px; margin:0; }
+  .badge { font-size:12px; padding:3px 10px; border-radius:999px; background:#eef1f5; color:var(--muted); }
+  .badge.connected { background:#e7f7ee; color:var(--ok); }
+  .badge.scanning, .badge.checking { background:#e8efff; color:var(--brand); }
+  .badge.offline { background:#fdecec; color:var(--bad); }
+  .card { background:var(--card); border-radius:12px; padding:18px 20px; margin-bottom:14px; box-shadow:0 1px 3px rgba(0,0,0,.06); }
+  .view { display:none; }
+  .view.active { display:block; }
+  .center { text-align:center; }
+  .big-icon { font-size:34px; line-height:1.2; }
+  .big-title { font-size:20px; font-weight:600; margin:6px 0 4px; }
+  .muted { color:var(--muted); font-size:12.5px; }
+  .kv { display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px dashed #eceef1; font-size:13px; }
+  .kv:last-child { border-bottom:none; }
+  .kv .k { color:var(--muted); }
+  button { background:var(--brand); color:#fff; border:none; border-radius:8px; padding:9px 18px; font-size:14px; cursor:pointer; }
+  button.ghost { background:#eef2ff; color:var(--brand); }
+  button:disabled { opacity:.5; }
+  .qr { margin:12px auto 6px; width:300px; height:400px; max-width:calc(100vw - 96px); position:relative; display:flex; align-items:center; justify-content:center;
+        border:1px dashed #dfe4ec; border-radius:14px; background:#fff; }
+  .qr.loaded { border-color:transparent; }
+  .qr iframe { width:100%; height:100%; border:0; border-radius:12px; background:#fff; }
+  html, body { overflow-x: hidden; }
+  .qr-spinner { position:absolute; left:50%; top:50%; margin:-15px 0 0 -15px; width:30px; height:30px;
+                border:3px solid #e6ebf3; border-top-color:var(--brand); border-radius:50%;
+                animation:spin 0.9s linear infinite; z-index:2; }
+  .qr.loaded .qr-spinner { display:none; }
+  .qr img { width:220px; height:220px; border-radius:8px; }
+  .login-frame { width:400px; height:540px; border:1px solid #e6e9ef; border-radius:12px; background:#fff;
+                 display:block; margin:12px auto; }
+  .steps { display:flex; justify-content:center; gap:18px; margin-top:16px; font-size:12.5px; color:#b6bcc6; }
+  .steps .on { color:var(--brand); font-weight:600; }
+  .steps .done { color:var(--ok); }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:7px 6px; border-bottom:1px solid #f0f1f3; }
+  th { color:var(--muted); font-weight:500; font-size:12px; }
+  code { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12.5px; }
+  .drawer { position:fixed; left:0; right:0; bottom:0; background:#0f1115; color:#c9d1d9; height:0; overflow:hidden;
+            transition:height .18s ease; border-top-left-radius:12px; border-top-right-radius:12px; }
+  .drawer.open { height:46%; }
+  .drawer pre { margin:0; padding:14px 16px; height:100%; overflow:auto; font-size:12px; line-height:1.55; }
+  .drawer .bar { display:flex; justify-content:space-between; align-items:center; padding:8px 14px; color:#9aa4b2; font-size:12px; }
+  .toolbar { position:fixed; left:0; right:0; bottom:0; height:56px; background:rgba(255,255,255,.92);
+             backdrop-filter:blur(8px); border-top:1px solid #eceef1; display:flex; align-items:center;
+             justify-content:space-between; padding:0 20px; }
+  .spinner { width:26px; height:26px; border:3px solid #e3e8f0; border-top-color:var(--brand); border-radius:50%;
+             margin:0 auto 12px; animation:spin 1s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>SDP 代理</h1>
+    <span class="badge" id="badge">启动中…</span>
+    <span class="muted" id="sub" style="margin-left:auto"></span>
+  </header>
+
+  <!-- 已连接 -->
+  <div class="view" id="view-connected">
+    <div class="card center">
+      <div class="big-icon" style="color:var(--ok)">✓</div>
+      <div class="big-title" style="color:var(--ok)">已连接</div>
+      <div class="muted">零信任资源已就绪，可正常访问内网</div>
+    </div>
+    <div class="card">
+      <div class="kv"><span class="k">账号</span><span id="c-user">-</span></div>
+      <div class="kv"><span class="k">会话</span><span id="c-session">-</span></div>
+      <div class="kv"><span class="k">代理</span><span><code id="c-listen">-</code>（SOCKS5）</span></div>
+      <div class="kv"><span class="k">HTTP 代理</span><span><code id="c-http">-</code></span></div>
+      <div class="kv"><span class="k">自动代理 (PAC)</span><span><code id="c-pac">-</code></span></div>
+      <div class="kv"><span class="k">规则订阅</span><span><code id="c-rules">-</code></span></div>
+      <div class="kv"><span class="k">系统代理</span><span><span id="c-sysproxy">-</span> <button id="btn-sysproxy" class="ghost" style="padding:3px 10px;font-size:12px;margin-left:8px">切换</button></span></div>
+    </div>
+    <div class="card">
+      <div class="muted" style="margin-bottom:6px">可用资源</div>
+      <table><thead><tr><th style="width:72%">域名 / IP</th><th>资源 ID</th></tr></thead>
+        <tbody id="res-body"><tr><td colspan="2" class="muted">加载中…</td></tr></tbody></table>
+    </div>
+  </div>
+
+  <!-- 需要登录 -->
+  <div class="view" id="view-login-required">
+    <div class="card center">
+      <div class="big-icon">🔐</div>
+      <div class="big-title">需要登录</div>
+      <div class="muted" style="margin-bottom:16px">使用「中建通」扫码登录后即可访问内网资源</div>
+      <button id="btn-login">扫码登录</button>
+    </div>
+  </div>
+
+  <!-- 扫码中 -->
+  <div class="view" id="view-scanning">
+    <div class="card center">
+      <div class="qr" id="qr-box">
+        <div class="qr-spinner" id="qr-spinner"></div>
+        <iframe id="login-frame" title="登录" src="about:blank" width="300" height="400" frameborder="0" scrolling="no"></iframe>
+      </div>
+      <div style="margin-top:10px;text-align:center"><button class="ghost" id="btn-refresh-qr">刷新二维码</button></div>
+
+
+    </div>
+  </div>
+
+  <!-- 验证中 -->
+  <div class="view" id="view-checking">
+    <div class="card center">
+      <div class="spinner"></div>
+      <div class="big-title" style="font-size:16px" id="check-title">正在认证…</div>
+      <div class="muted">请稍候</div>
+
+    </div>
+  </div>
+
+  <!-- 掉线 -->
+  <div class="view" id="view-offline">
+    <div class="card center">
+      <div class="big-icon" style="color:var(--warn)">⚠️</div>
+      <div class="big-title" style="color:var(--warn)">连接已断开</div>
+      <div class="muted" style="margin-bottom:16px">会话已过期，需要重新扫码登录</div>
+      <button id="btn-relogin">重新扫码登录</button>
+    </div>
+  </div>
+</div>
+
+<div class="drawer" id="drawer">
+  <div class="bar"><span>运行日志</span><span style="cursor:pointer" id="drawer-close">收起 ✕</span></div>
+  <pre id="log"></pre>
+</div>
+
+<div class="toolbar">
+  <button class="ghost" id="btn-logs">日志</button>
+  <div style="display:flex;gap:10px;align-items:center">
+    <span class="muted" id="foot-hint"></span>
+    <button class="ghost" id="btn-relogin2" style="display:none">重新登录</button>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let state = '';
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+
+function show(view) {
+  ['connected','login-required','scanning','checking','offline'].forEach(v => {
+    $('view-' + v).classList.toggle('active', v === view);
+  });
+}
+
+function setBadge(s) {
+  const b = $('badge');
+  b.className = 'badge ' + s;
+  const map = {connected:'已连接', scanning:'等待扫码', checking:'验证中', offline:'已掉线', login_required:'未登录', connecting:'连接中'};
+  b.textContent = map[s] || '未登录';
+}
+
+async function refreshStatus() {
+  try {
+    const s = await api('/api/status');
+    state = s.state || 'login_required';
+    setBadge(state);
+    $('c-user').textContent = s.username || '-';
+    $('c-session').textContent = s.session_ok ? '正常' : '异常';
+    $('c-listen').textContent = s.listen || '-';
+    $('c-http').textContent = s.http_listen || '-';
+    $('c-pac').textContent = location.origin + '/proxy.pac';
+    $('c-rules').textContent = location.origin + '/surge.list';
+    $('sub').textContent = state === 'connected' ? ('共 ' + s.resource_count + ' 个资源') : '';
+    const conn = state === 'connected';
+    $('btn-relogin2').style.display = (conn || state === 'offline') ? 'inline-block' : 'none';
+    if (state === 'connected') { show('connected'); }
+    else if (state === 'offline') { show('offline'); }
+    else if (state === 'login_required') { show('login-required'); }
+    else if (state === 'scanning') { show('scanning'); }
+    else if (state === 'checking') { show('checking'); }
+  } catch (e) { /* 等待后台启动 */ }
+}
+
+async function refreshLogin() {
+  try {
+    const l = await api('/api/login');
+    if (state === 'scanning') {
+      const box = document.getElementById('qr-box');
+      const frame = document.getElementById('login-frame');
+      if (frame && l.url && frame.dataset.ts !== String(l.ts)) {
+        frame.dataset.ts = String(l.ts);
+        box.classList.remove('loaded');
+        frame.onload = () => {
+          box.classList.add('loaded');
+          // 与官方客户端一致的 postMessage 握手
+          try { frame.contentWindow.postMessage('ask_usePostMessage', '*'); } catch (e) {}
+        };
+        frame.src = '/api/login/page?ts=' + l.ts;   // 包装页：内嵌真实登录页并转发 postMessage
+      }
+      if (l.state === 'error' || !l.qr_ready) {
+        const hint = document.getElementById('login-hint-text');
+        if (hint) hint.textContent = l.error || '二维码生成中…';
+      } else {
+        const hint = document.getElementById('login-hint-text');
+        if (hint) hint.textContent = '请用「中建通」扫描二维码（过期可点刷新）';
+      }
+    }
+  } catch (e) {}
+}
+
+async function refreshResources() {
+  if (state !== 'connected') return;
+  try {
+    const r = await api('/api/resources');
+    const tb = $('res-body');
+    const list = r.resources || [];
+    tb.innerHTML = list.length
+      ? list.map(x => '<tr><td><code>' + esc(x.domain || '') + '</code></td><td>' + esc(x.resid) + '</td></tr>').join('')
+      : '<tr><td colspan="2" class="muted">暂无</td></tr>';
+  } catch (e) {}
+}
+
+async function refreshSysProxy() {
+  try {
+    const r = await api('/api/sysproxy');
+    $('c-sysproxy').textContent = r.enabled ? '已开启' : '未开启';
+    $('c-sysproxy').style.color = r.enabled ? 'var(--ok)' : 'var(--muted)';
+  } catch (e) {}
+}
+
+async function refreshLogs() {
+  if (!$('drawer').classList.contains('open')) return;
+  try {
+    const r = await api('/api/logs');
+    const el = $('log');
+    el.textContent = (r.lines || []).join('\n');
+    el.scrollTop = el.scrollHeight;
+  } catch (e) {}
+}
+
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+function bind(btnId, fn) {
+  const b = $(btnId);
+  if (b) b.onclick = async () => { b.disabled = true; await fn(); b.disabled = false; };
+}
+
+bind('btn-login', async () => { await fetch('/api/login', {method:'POST'}); refreshStatus(); });
+bind('btn-relogin', async () => { await fetch('/api/login', {method:'POST'}); refreshStatus(); });
+$('btn-logs').onclick = () => {
+  const d = $('drawer');
+  d.classList.toggle('open');
+  if (d.classList.contains('open')) refreshLogs();
+};
+$('drawer-close').onclick = () => $('drawer').classList.remove('open');
+
+// 兼容页面直接向顶层 window 发送结果
+window.addEventListener('message', function(e){
+  try {
+    var d = (typeof e.data === 'string') ? e.data : JSON.stringify(e.data);
+    fetch('/api/login/notify', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({data:d})});
+  } catch (err) {}
+});
+
+$('btn-relogin2').onclick = async () => {
+  await fetch('/api/relogin', {method:'POST'});
+  refreshStatus();
+};
+
+$('btn-refresh-qr').onclick = async () => {
+  await fetch('/api/login/refresh', {method:'POST'});
+  const img = document.getElementById('qr-img');
+  if (img) { img.dataset.ts = ''; }
+  refreshLogin();
+};
+
+$('btn-sysproxy').onclick = async () => {
+  const r = await api('/api/sysproxy');
+  await fetch('/api/sysproxy', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enable: !r.enabled})});
+  refreshSysProxy();
+};
+
+refreshStatus();
+refreshSysProxy();
+setInterval(refreshStatus, 2000);
+setInterval(refreshSysProxy, 5000);
+setInterval(refreshLogin, 2000);
+setInterval(refreshResources, 5000);
+setInterval(refreshLogs, 2000);
+</script>
+</body>
+</html>

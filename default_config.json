@@ -1,0 +1,14 @@
+{
+  "gateway": "122.191.10.77:27442,122.191.10.77:37442,122.191.10.77:47442",
+  "server_name": "sdp.cscec5b.com.cn",
+  "server_base": "https://sdp.cscec5b.com.cn:17441",
+  "device_id": "888499",
+  "listen": "127.0.0.1:11095",
+  "http_listen": "127.0.0.1:11096",
+  "ui_listen": "127.0.0.1:28181",
+  "resources": [
+    {"domain": "cscec5b.com.cn", "resid": "241"},
+    {"domain": "erp.hnzjdc.com", "resid": "191"},
+    {"domain": "portal.cscec5b.com.cn", "resid": "244"}
+  ]
+}
