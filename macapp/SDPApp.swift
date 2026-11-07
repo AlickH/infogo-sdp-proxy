@@ -59,7 +59,6 @@ final class AppModel: ObservableObject {
     @Published var qrURL = ""
     @Published var loginError = ""
     @Published var logsText = ""
-    @Published var proxyEnabled = false
     @Published var showLogs = false
     @Published var lastError = ""
     @Published var neStatus = "未启用"
@@ -73,9 +72,7 @@ final class AppModel: ObservableObject {
     @Published var wgActive = false
     @Published var wgError = ""
     private let server: ProxyServer
-    private var proxyTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
-    private var proxyCheckBusy = false
 
     let home = NSHomeDirectory()
     var configPath: String { home + "/.sdp-proxy/config.json" }
@@ -133,10 +130,6 @@ final class AppModel: ObservableObject {
             }
         }
 
-        proxyTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            self?.refreshSystemProxyState()
-        }
-        refreshSystemProxyState()
         ne.refreshStatus()
         wg.refresh()
     }
@@ -156,10 +149,9 @@ final class AppModel: ObservableObject {
 
     func relogin() {
         Task { @MainActor in
-            // 与 Go 版一致：退出登录时先关闭系统代理，避免断网
-            if proxyEnabled, let svc = activeService() {
+            // 清理旧版本可能开启的 PAC，避免指向已停止的代理
+            if let svc = activeService(), systemProxyEnabled() {
                 _ = run("/usr/sbin/networksetup", ["-setautoproxystate", svc, "off"])
-                refreshSystemProxyState()
             }
             await engine.logout()
             _ = await engine.beginLogin()
@@ -200,7 +192,6 @@ final class AppModel: ObservableObject {
     }
 
     func quit() {
-        proxyTimer?.invalidate()
         server.stop()
         if systemProxyEnabled(), let svc = activeService() {
             _ = run("/usr/sbin/networksetup", ["-setautoproxystate", svc, "off"])
@@ -252,33 +243,6 @@ final class AppModel: ObservableObject {
         guard let svc = activeService() else { return false }
         let (_, out) = run("/usr/sbin/networksetup", ["-getautoproxyurl", svc])
         return out.contains("proxy.pac") && out.contains("Enabled: Yes")
-    }
-
-    func refreshSystemProxyState() {
-        guard !proxyCheckBusy else { return }
-        proxyCheckBusy = true
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let self = self else { return }
-            let on = self.systemProxyEnabled()
-            DispatchQueue.main.async {
-                if self.proxyEnabled != on { self.proxyEnabled = on }
-                self.proxyCheckBusy = false
-            }
-        }
-    }
-
-    func toggleSystemProxy() {
-        guard let svc = activeService() else { lastError = "未找到活动网络服务"; return }
-        let pac = "http://" + uiAddress() + "/proxy.pac"
-        if proxyEnabled {
-            _ = run("/usr/sbin/networksetup", ["-setautoproxystate", svc, "off"])
-        } else {
-            _ = run("/usr/sbin/networksetup", ["-setautoproxyurl", svc, pac])
-            _ = run("/usr/sbin/networksetup", ["-setautoproxystate", svc, "on"])
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.refreshSystemProxyState()
-        }
     }
 
     func shutdownSynchronously() {

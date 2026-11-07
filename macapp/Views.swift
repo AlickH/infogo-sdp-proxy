@@ -53,10 +53,6 @@ struct MenuBarContent: View {
                            visible: true, active: model.neActive) {
                     model.toggleNE()
                 }
-                iconButton("network", help: model.proxyEnabled ? "取消系统代理" : "设为系统代理",
-                           visible: true, active: model.proxyEnabled) {
-                    model.toggleSystemProxy()
-                }
                 iconButton("power", help: "退出", visible: true) {
                     model.quit()
                 }

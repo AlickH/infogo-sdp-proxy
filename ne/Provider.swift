@@ -20,7 +20,11 @@ final class Provider: NETransparentProxyProvider {
                           localNetwork: nil, localPrefix: 0,
                           protocol: .TCP, direction: .outbound)
         ]
-        settings.excludedNetworkRules = []
+        // 排除回环，避免本地 SOCKS/HTTP 代理被透明代理再次捕获
+        let loopbackV4 = NENetworkRule(remoteNetwork: NWHostEndpoint(hostname: "127.0.0.1", port: "0"),
+                                       remotePrefix: 8, localNetwork: nil, localPrefix: 0,
+                                       protocol: .any, direction: .outbound)
+        settings.excludedNetworkRules = [loopbackV4]
         setTunnelNetworkSettings(settings) { error in
             completionHandler(error)
         }
