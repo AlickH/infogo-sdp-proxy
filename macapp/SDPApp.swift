@@ -62,8 +62,11 @@ final class AppModel: ObservableObject {
     @Published var proxyEnabled = false
     @Published var showLogs = false
     @Published var lastError = ""
+    @Published var neStatus = "未启用"
+    @Published var neActive = false
 
     let engine: Engine
+    let ne = NEManager()
     private let server: ProxyServer
     private var proxyTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
@@ -85,6 +88,18 @@ final class AppModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        ne.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.neStatus = self.ne.statusText
+                    self.neActive = self.ne.active
+                    if !self.ne.lastError.isEmpty { self.lastError = self.ne.lastError }
+                }
+            }
+            .store(in: &cancellables)
+
         server.start()
         Task { @MainActor in
             await engine.start()
@@ -93,12 +108,16 @@ final class AppModel: ObservableObject {
                 _ = await engine.beginLogin()
                 syncFromEngine()
             }
+            if ProcessInfo.processInfo.environment["SDP_NE_AUTO"] == "1" {
+                toggleNE()
+            }
         }
 
         proxyTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             self?.refreshSystemProxyState()
         }
         refreshSystemProxyState()
+        ne.refreshStatus()
     }
 
     func syncFromEngine() {
@@ -136,6 +155,15 @@ final class AppModel: ObservableObject {
 
     func onScanned() {
         Task { await engine.onScanned() }
+    }
+
+    func toggleNE() {
+        if ne.active {
+            ne.disable()
+        } else {
+            let (_, port) = SDPConfig.splitHostPort(engine.cfg.listen)
+            ne.enable(socksPort: port)
+        }
     }
 
     func quit() {

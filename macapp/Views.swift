@@ -46,6 +46,11 @@ struct MenuBarContent: View {
                 iconButton("doc.text", help: "日志", visible: true) {
                     model.showLogs.toggle()
                 }
+                iconButton("shield.lefthalf.filled",
+                           help: model.neActive ? "关闭全局接管（NE）" : "开启全局接管（NE）",
+                           visible: true, active: model.neActive) {
+                    model.toggleNE()
+                }
                 iconButton("network", help: model.proxyEnabled ? "取消系统代理" : "设为系统代理",
                            visible: true, active: model.proxyEnabled) {
                     model.toggleSystemProxy()

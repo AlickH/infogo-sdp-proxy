@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>SDPNE</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.alick.sdp-proxy.ne</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>SDP Proxy NE</string>
+	<key>CFBundlePackageType</key>
+	<string>SYSX</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.networkextension</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>SDPNE.Provider</string>
+	</dict>
+	<key>NSSystemExtensionUsageDescription</key>
+	<string>SDP 需要该扩展把本机 TCP 流量转发到本地 SDP 代理</string>
+	<key>NetworkExtension</key>
+	<dict>
+		<key>NEProviderClasses</key>
+		<dict>
+			<key>com.apple.networkextension.app-proxy</key>
+			<string>SDPNE.Provider</string>
+		</dict>
+	</dict>
+</dict>
+</plist>
