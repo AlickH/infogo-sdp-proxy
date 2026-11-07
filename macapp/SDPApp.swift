@@ -22,7 +22,7 @@ struct SDPApp: App {
 struct MenuBarIcon: View {
     let connected: Bool
 
-    private var symbolName: String { connected ? "globe" : "wifi.slash" }
+    private var symbolName: String { connected ? "checkmark.shield.fill" : "shield.slash.fill" }
 
     var body: some View {
         if let img = Self.render(symbolName) {

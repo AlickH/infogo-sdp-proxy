@@ -236,7 +236,7 @@ struct PanelStatusIcon: View {
     let state: String
     private var connected: Bool { state == "connected" }
     private var symbol: String {
-        connected ? "network.badge.shield.half.filled" : "network.slash"
+        connected ? "checkmark.shield.fill" : "shield.slash.fill"
     }
 
     var body: some View {
