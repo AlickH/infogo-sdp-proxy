@@ -20,6 +20,8 @@ final class Engine: ObservableObject {
     private var serverInfo: [String: Any]?
 
     private var pollTask: Task<Void, Never>?
+    private var scannedAt: Int64?
+    private let scanLock = NSLock()
     private var sessionTimer: DispatchSourceTimer?
     private var policyTimer: DispatchSourceTimer?
     private let logLock = NSLock()
@@ -136,11 +138,11 @@ final class Engine: ObservableObject {
 
     func refreshQR() async -> String? {
         pollTask?.cancel()
-        guard let info = serverInfo else { return await beginLogin() }
-        let url = makeQRURL(info: info)
+        guard serverInfo != nil else { return await beginLogin() }
+        _ = refreshQRInternal()
         state = "scanning"
         await startPoll(ts: qrTS)
-        return url
+        return qrURL
     }
 
     private func makeQRURL(info: [String: Any]) -> String {
@@ -160,28 +162,63 @@ final class Engine: ObservableObject {
 
     private func startPoll(ts: Int64) async {
         pollTask?.cancel()
-        let captured = ts
+        scanLock.lock(); scannedAt = nil; scanLock.unlock()
         pollTask = Task { [weak self] in
             guard let self = self else { return }
-            var scanned = false
+            var currentTS = ts
+            var started = Self.nowMillis()
             while !Task.isCancelled {
-                if !scanned {
-                    if let (wecomToken, user) = await self.pollScan(ts: captured) {
-                        scanned = true
-                        self.state = "checking"
-                        let ok = await self.finishLogin(wecomToken: wecomToken, username: user)
-                        if ok { return }
-                    }
+                guard self.state == "scanning" else { return }
+
+                if let (wecomToken, user) = await self.pollScan(ts: currentTS) {
+                    self.state = "checking"
+                    let ok = await self.finishLogin(wecomToken: wecomToken, username: user)
+                    if ok { return }
+                    self.state = "scanning"
+                }
+
+                let now = Self.nowMillis()
+                self.scanLock.lock()
+                let notified = self.scannedAt
+                self.scanLock.unlock()
+
+                var refresh = false
+                var reason = ""
+                if let notified = notified, now - notified > 20_000 {
+                    refresh = true
+                    reason = "已收到扫码回传但轮询未成功，刷新二维码"
+                }
+                if now - started > 120_000 {
+                    refresh = true
+                    reason = "二维码已自动刷新（2 分钟）"
+                }
+                if refresh {
+                    self.log("[界面] \(reason)")
+                    self.refreshQRInternal()
+                    currentTS = self.qrTS
+                    started = now
+                    self.scanLock.lock(); self.scannedAt = nil; self.scanLock.unlock()
                 }
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
         }
     }
 
+    static func nowMillis() -> Int64 { Int64(Date().timeIntervalSince1970 * 1000) }
+
+    /// 用缓存的 serverInfo 重新生成二维码
+    @discardableResult
+    private func refreshQRInternal() -> Bool {
+        guard let info = serverInfo else { return false }
+        _ = makeQRURL(info: info)
+        return true
+    }
+
     /// QR 页面被重定向到 SDP 服务端时调用（说明已扫码）
     func onScanned() async {
-        // 轮询会自然发现 state=true；这里只是加速
-        if state == "scanning" { log("[扫码] 检测到扫码跳转") }
+        guard state == "scanning" else { return }
+        scanLock.lock(); scannedAt = Self.nowMillis(); scanLock.unlock()
+        log("[扫码] 检测到扫码跳转")
     }
 
     private func pollScan(ts: Int64) async -> (String, String)? {
@@ -208,11 +245,11 @@ final class Engine: ObservableObject {
             loginError = "RSA 加密失败"
             return false
         }
-        let encHex = enc.map { String(format: "%02x", $0) }.joined()
+        let encB64 = enc.base64EncodedString()
         let userNameB64 = Data(username.utf8).base64EncodedString()
         do {
             let r = try await api.call(method: "POST", path: "/access/1.0/linux/json/auth/index", params: [
-                "type": "User", "user_name": userNameB64, "password": encHex,
+                "type": "User", "user_name": userNameB64, "password": encB64,
                 "weworkqrlogin": "1", "zjt": "1", "deviceid": cfg.deviceID,
                 "autoAuth": "0", "hintOver": "0", "idp": "", "isRecord": "1",
                 "remoteIp": "", "tokenId": "",
