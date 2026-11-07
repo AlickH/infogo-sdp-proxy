@@ -13,12 +13,32 @@ struct SDPApp: App {
         MenuBarExtra {
             MenuBarContent(model: model)
         } label: {
-            Image(systemName: model.state == "connected"
-                  ? "network.badge.shield.half.filled" : "network.slash")
-                .fontWeight(.heavy)
-                .imageScale(.large)
+            MenuBarIcon(connected: model.state == "connected")
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+struct MenuBarIcon: View {
+    let connected: Bool
+
+    private var symbolName: String { connected ? "globe" : "wifi.slash" }
+
+    var body: some View {
+        if let img = Self.render(symbolName) {
+            Image(nsImage: img)
+        } else {
+            Image(systemName: symbolName).fontWeight(.heavy)
+        }
+    }
+
+    /// 预渲染 heavy 字重，避免菜单栏把符号压细
+    static func render(_ name: String) -> NSImage? {
+        let cfg = NSImage.SymbolConfiguration(pointSize: 18, weight: .heavy)
+        guard let img = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+            .withSymbolConfiguration(cfg) else { return nil }
+        img.isTemplate = true
+        return img
     }
 }
 
