@@ -35,7 +35,8 @@ struct MenuBarContent: View {
             }
             Spacer()
             HStack(spacing: 6) {
-                iconButton("arrow.clockwise", help: "刷新二维码", visible: model.state == "scanning") {
+                iconButton("arrow.clockwise", help: "刷新二维码",
+                           visible: model.state == "scanning" || model.state == "login_required") {
                     model.refreshQR()
                 }
                 iconButton("arrow.triangle.2.circlepath", help: "重新登录",
@@ -82,15 +83,6 @@ struct MenuBarContent: View {
                 .foregroundColor(active ? .accentColor : .primary)
                 .help(help)
             }
-        }
-    }
-
-    private var subtitle: String {
-        switch model.state {
-        case "connected": return "共 \(model.resourceCount) 个可用资源"
-        case "offline": return "会话已断开"
-        case "scanning": return ""
-        default: return "零信任 SOCKS5 · 无需接管系统网络"
         }
     }
 
@@ -158,16 +150,37 @@ struct MenuBarContent: View {
     }
 
     private var scanningView: some View {
-        QRContainer(url: model.qrURL, onScanned: model.onScanned)
-            .frame(width: 300, height: 352)
-            .clipShape(RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.18), lineWidth: 1))
+        VStack(alignment: .leading, spacing: 8) {
+            QRContainer(url: model.qrURL, onScanned: model.onScanned)
+                .frame(width: 300, height: 352)
+                .clipShape(RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.18), lineWidth: 1))
+            errorBanner
+        }
+    }
+
+    @ViewBuilder
+    private var errorBanner: some View {
+        if !model.loginError.isEmpty {
+            HStack(alignment: .top, spacing: 4) {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .font(.system(size: 10)).foregroundColor(.red)
+                Text(model.loginError)
+                    .font(.system(size: 10))
+                    .foregroundColor(.red)
+                    .lineLimit(3)
+                    .textSelection(.enabled)
+            }
+        }
     }
 
     private var checkingView: some View {
-        HStack(spacing: 10) {
-            ProgressView()
-            Text("正在认证并安检…").font(.system(size: 12))
+        VStack(spacing: 10) {
+            HStack(spacing: 10) {
+                ProgressView()
+                Text("正在认证…").font(.system(size: 12))
+            }
+            errorBanner
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 30)
@@ -179,6 +192,7 @@ struct MenuBarContent: View {
                 .font(.system(size: 26)).foregroundColor(.orange)
             Text("连接已断开").font(.system(size: 14, weight: .medium))
             Text("会话已过期，需要重新扫码登录").font(.system(size: 11)).foregroundColor(.secondary)
+            errorBanner
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
@@ -187,10 +201,13 @@ struct MenuBarContent: View {
     private var loginRequiredView: some View {
         VStack(spacing: 10) {
             Text("需要登录").font(.system(size: 14, weight: .medium))
-            Text("请点击下方按钮，用「中建通」扫码").font(.system(size: 11)).foregroundColor(.secondary)
+            Text("用「中建通」扫描二维码即可登录").font(.system(size: 11)).foregroundColor(.secondary)
+            Button("生成二维码") { model.refreshQR() }
+                .buttonStyle(.borderless)
+            errorBanner
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 24)
+        .padding(.vertical, 20)
     }
 
     private func infoRow(_ k: String, _ v: String) -> some View {
