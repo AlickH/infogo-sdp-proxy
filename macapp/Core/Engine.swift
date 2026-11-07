@@ -227,6 +227,14 @@ final class Engine: ObservableObject {
             cfg.token = tok
             try? cfg.save(path: cfgPath)
             self.username = (d["UserName"] as? String) ?? username
+            // 与 Go 版一致：登录后上报 check/success 并拉取网关列表
+            let deviceID = (d["DeviceID"] as? String) ?? cfg.deviceID
+            let roleID = (d["RoleID"] as? String) ?? ""
+            _ = try? await api.call(method: "POST", path: "/access/1.0/linux/json/check/success",
+                                    params: ["deviceid": deviceID, "roleid": roleID,
+                                             "policyid": "3", "sceneid": "3"])
+            _ = try? await api.call(method: "POST", path: "/access/1.0/linux/json/ZtpGateway/getGateway",
+                                    params: [:])
             log("[界面] 扫码登录成功: \(self.username)")
             state = "connected"
             sessionOK = true

@@ -116,6 +116,11 @@ final class AppModel: ObservableObject {
 
     func relogin() {
         Task { @MainActor in
+            // 与 Go 版一致：退出登录时先关闭系统代理，避免断网
+            if proxyEnabled, let svc = activeService() {
+                _ = run("/usr/sbin/networksetup", ["-setautoproxystate", svc, "off"])
+                refreshSystemProxyState()
+            }
             await engine.logout()
             _ = await engine.beginLogin()
             syncFromEngine()
