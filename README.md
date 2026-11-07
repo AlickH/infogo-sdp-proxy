@@ -259,8 +259,22 @@ macapp/Core/
 swiftc -parse-as-library -O -target arm64-apple-macosx13.0 \
   -framework SwiftUI -framework Cocoa -framework WebKit \
   -framework Network -framework Security -framework CryptoKit \
-  macapp/SDPApp.swift macapp/Views.swift macapp/Core/*.swift \
+  macapp/SDPApp.swift macapp/Views.swift macapp/QRWebView.swift macapp/Core/*.swift \
   -o SDP.app/Contents/MacOS/SDP
 ```
 
 Windows 版仍为 Go 单文件（`go build -ldflags "-H=windowsgui"`）。
+
+### macOS 核心自检
+
+```bash
+# 策略表 / 隧道 / RSA
+swiftc -parse-as-library -O -target arm64-apple-macosx13.0 \
+  -framework Network -framework Security -framework CryptoKit \
+  macapp/Core/*.swift Tools/main.swift -o /tmp/sdptest && /tmp/sdptest
+
+# 扫码重定向拦截（无需真实扫码）
+swiftc -parse-as-library -O -target arm64-apple-macosx13.0 \
+  -framework AppKit -framework WebKit -framework SwiftUI \
+  macapp/QRWebView.swift Tools/QRRedirectTest.swift -o /tmp/qrtest && /tmp/qrtest
+```
