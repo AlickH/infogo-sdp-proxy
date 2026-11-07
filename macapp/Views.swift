@@ -290,9 +290,11 @@ struct QRWebView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> WKWebView {
         let cfg = WKWebViewConfiguration()
-        let wv = WKWebView(frame: NSRect(x: 0, y: 0, width: 300, height: 400), configuration: cfg)
+        let wv = WKWebView(frame: NSRect(x: 0, y: 0, width: 300, height: 460), configuration: cfg)
         wv.navigationDelegate = context.coordinator
         wv.autoresizingMask = [.width, .height]
+        // 官方页面最小宽度约 375pt，缩 0.8 后完整显示且居中
+        wv.pageZoom = 0.8
         return wv
     }
 
