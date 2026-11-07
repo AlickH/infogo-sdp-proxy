@@ -44,7 +44,6 @@ struct MenuBarContent: View {
                 }
                 iconButton("doc.text", help: "日志", visible: true) {
                     model.showLogs.toggle()
-                    if model.showLogs { model.fetchLogs() }
                 }
                 iconButton("network", help: model.proxyEnabled ? "取消系统代理" : "设为系统代理",
                            visible: true, active: model.proxyEnabled) {
@@ -159,8 +158,8 @@ struct MenuBarContent: View {
     }
 
     private var scanningView: some View {
-        QRContainer(base: model.apiBase, ts: model.qrTS)
-            .frame(width: 300, height: 400)
+        QRContainer(url: model.qrURL, onScanned: model.onScanned)
+            .frame(width: 300, height: 460)
             .clipShape(RoundedRectangle(cornerRadius: 10))
             .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.secondary.opacity(0.18), lineWidth: 1))
     }
@@ -260,10 +259,34 @@ struct PanelStatusIcon: View {
     }
 }
 
+// 二维码容器：直接加载官方登录页，拦截跳转判断扫码完成
+struct QRContainer: View {
+    let url: String
+    let onScanned: () -> Void
+    @State private var loaded = false
+
+    var body: some View {
+        ZStack {
+            if !loaded || url.isEmpty {
+                ProgressView()
+            } else {
+                Color.clear
+            }
+            if !url.isEmpty {
+                QRWebView(url: url, onLoaded: {
+                    withAnimation(.easeOut(duration: 0.18)) { loaded = true }
+                }, onScanned: onScanned)
+                .opacity(loaded ? 1 : 0)
+            }
+        }
+        .onChange(of: url) { _ in loaded = false }
+    }
+}
+
 struct QRWebView: NSViewRepresentable {
-    let base: String
-    let ts: Int64
+    let url: String
     let onLoaded: () -> Void
+    let onScanned: () -> Void
 
     func makeNSView(context: Context) -> WKWebView {
         let cfg = WKWebViewConfiguration()
@@ -274,47 +297,38 @@ struct QRWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ wv: WKWebView, context: Context) {
-        let key = "\(base)|\(ts)"
-        if context.coordinator.loaded != key, ts > 0 {
-            context.coordinator.loaded = key
-            context.coordinator.onLoaded = onLoaded
-            if let url = URL(string: base + "/api/login/page?ts=" + String(ts)) {
-                wv.load(URLRequest(url: url))
-            }
+        guard !url.isEmpty, context.coordinator.loadedURL != url else { return }
+        context.coordinator.loadedURL = url
+        context.coordinator.onLoaded = onLoaded
+        context.coordinator.onScanned = onScanned
+        if let u = URL(string: url) {
+            wv.load(URLRequest(url: u))
         }
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
-        var loaded = ""
+        var loadedURL = ""
         var onLoaded: (() -> Void)?
+        var onScanned: (() -> Void)?
+
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             DispatchQueue.main.async { self.onLoaded?() }
         }
-    }
-}
 
-// 二维码容器：加载完成前显示占位，完成后淡入，避免首帧尺寸/位置抖动
-struct QRContainer: View {
-    let base: String
-    let ts: Int64
-    @State private var loaded = false
-
-    var body: some View {
-        ZStack {
-            if !loaded || ts == 0 {
-                ProgressView()
-            } else {
-                Color.clear
+        /// 页面扫码后会被重定向到 SDP 服务端（redirect_uri），拦截它并通知轮询
+        func webView(_ webView: WKWebView,
+                     decidePolicyFor navigationAction: WKNavigationAction,
+                     decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+            if let u = navigationAction.request.url,
+               u.host?.contains("sdp.cscec5b.com.cn") == true,
+               u.path.contains("/wework/user") {
+                decisionHandler(.cancel)
+                DispatchQueue.main.async { self.onScanned?() }
+                return
             }
-            if ts > 0 {
-                QRWebView(base: base, ts: ts) {
-                    withAnimation(.easeOut(duration: 0.18)) { loaded = true }
-                }
-                .opacity(loaded ? 1 : 0)
-            }
+            decisionHandler(.allow)
         }
-        .onChange(of: ts) { _ in loaded = false }
     }
 }

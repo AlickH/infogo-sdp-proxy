@@ -231,3 +231,36 @@ LaunchServices 会缓存旧图标，重装到同一路径后可能仍显示占�
 ```
 
 内部会执行 `lsregister -f` + `touch`，然后重启 Finder。
+
+
+## macOS 版：纯 Swift 实现
+
+macOS 端已不再依赖 Go 子进程，全部逻辑在 Swift 内完成：
+
+```
+macapp/Core/
+├── Config.swift      # 配置读写
+├── DNS.swift         # 公共 DNS 解析（223.5.5.5，避开 fake-IP）
+├── SessionNum.swift  # Session-Num 签名（MD5）
+├── TLSHTTP.swift     # 裸 TLS HTTP/1.1（指定连接 IP + SNI）
+├── ApiClient.swift   # SDP API 客户端
+├── RSA.swift         # RSA PKCS#1 加密（登录认证）
+├── Gateway.swift     # 网关隧道协议（auth/CONNECT 帧）
+├── Streams.swift     # 字节流抽象与双向转发
+├── ProxyServer.swift # 本地 SOCKS5 / HTTP 代理 / 规则服务
+├── RuleStore.swift   # 资源规则匹配（域名/IP/CIDR/端口）
+├── RuleText.swift    # PAC / Surge / Clash 规则生成
+└── Engine.swift      # 登录、会话、策略、状态机
+```
+
+构建（无需 Go）：
+
+```bash
+swiftc -parse-as-library -O -target arm64-apple-macosx13.0 \
+  -framework SwiftUI -framework Cocoa -framework WebKit \
+  -framework Network -framework Security -framework CryptoKit \
+  macapp/SDPApp.swift macapp/Views.swift macapp/Core/*.swift \
+  -o SDP.app/Contents/MacOS/SDP
+```
+
+Windows 版仍为 Go 单文件（`go build -ldflags "-H=windowsgui"`）。
