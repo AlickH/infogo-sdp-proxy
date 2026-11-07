@@ -38,6 +38,10 @@ struct MenuBarContent: View {
                 iconButton("arrow.clockwise", help: "刷新二维码", visible: model.state == "scanning") {
                     model.refreshQR()
                 }
+                iconButton("arrow.triangle.2.circlepath", help: "重新登录",
+                           visible: model.state == "connected" || model.state == "offline") {
+                    model.relogin()
+                }
                 iconButton("doc.text", help: "日志", visible: true) {
                     model.showLogs.toggle()
                     if model.showLogs { model.fetchLogs() }
