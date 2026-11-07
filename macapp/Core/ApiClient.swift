@@ -40,9 +40,13 @@ final class SDPApiClient {
                 baseURL += "&\(k)=\(esc)"
             }
         } else if !keys.isEmpty {
-            var comps = URLComponents()
-            comps.queryItems = keys.map { URLQueryItem(name: $0, value: params[$0]) }
-            body = Data((comps.percentEncodedQuery ?? "").utf8)
+            // 严格表单编码：+ / = 等必须转义，否则 base64 里的 + 会被服务端当成空格
+            var allowed = CharacterSet.alphanumerics
+            allowed.insert(charactersIn: "-._~")
+            func esc(_ v: String) -> String {
+                v.addingPercentEncoding(withAllowedCharacters: allowed) ?? v
+            }
+            body = Data(keys.map { "\(esc($0))=\(esc(params[$0]!))" }.joined(separator: "&").utf8)
         }
 
         guard let url = URL(string: baseURL) else { throw HTTPError.badResponse("URL 无效") }

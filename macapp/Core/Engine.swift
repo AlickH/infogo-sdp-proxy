@@ -142,6 +142,7 @@ final class Engine: ObservableObject {
     }
 
     func refreshQR() async -> String? {
+        loginError = ""
         pollTask?.cancel()
         guard serverInfo != nil else { return await beginLogin() }
         _ = refreshQRInternal()
@@ -199,6 +200,7 @@ final class Engine: ObservableObject {
                 }
                 if refresh {
                     self.log("[界面] \(reason)")
+                    self.loginError = ""
                     self.refreshQRInternal()
                     currentTS = self.qrTS
                     started = now
@@ -233,7 +235,9 @@ final class Engine: ObservableObject {
             guard r.errCode == "0", let d = r.data as? [String: Any] else { return nil }
             let st = (d["state"] as? Bool) ?? false
             if st, let tok = d["token"] as? String {
-                return (tok, (d["username"] as? String) ?? "")
+                let user = (d["username"] as? String) ?? ""
+                log("[扫码] 轮询成功 user=\(user) token长度=\(tok.count) ts=\(ts)")
+                return (tok, user)
             }
         } catch {
             log("[扫码] 轮询失败: \(error)")
@@ -252,6 +256,7 @@ final class Engine: ObservableObject {
         }
         let encB64 = enc.base64EncodedString()
         let userNameB64 = Data(username.utf8).base64EncodedString()
+        log("[登录] auth 请求 user=\(username) userB64=\(userNameB64) pwB64长度=\(encB64.count) deviceid=\(cfg.deviceID)")
         do {
             let r = try await api.call(method: "POST", path: "/access/1.0/linux/json/auth/index", params: [
                 "type": "User", "user_name": userNameB64, "password": encB64,
@@ -259,6 +264,10 @@ final class Engine: ObservableObject {
                 "autoAuth": "0", "hintOver": "0", "idp": "", "isRecord": "1",
                 "remoteIp": "", "tokenId": "",
             ])
+            if r.errCode != "0" {
+                let raw = String(data: r.raw.prefix(400), encoding: .utf8) ?? ""
+                log("[登录] auth 响应 errcode=\(r.errCode) errmsg=\(r.errMsg) raw=\(raw)")
+            }
             guard r.errCode == "0", let d = r.data as? [String: Any], let tok = d["Token"] as? String else {
                 loginError = "认证失败: \(r.errCode) \(r.errMsg)"
                 log("[登录] \(loginError)")
