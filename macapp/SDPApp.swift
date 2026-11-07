@@ -149,10 +149,6 @@ final class AppModel: ObservableObject {
 
     func relogin() {
         Task { @MainActor in
-            // 清理旧版本可能开启的 PAC，避免指向已停止的代理
-            if let svc = activeService(), systemProxyEnabled() {
-                _ = run("/usr/sbin/networksetup", ["-setautoproxystate", svc, "off"])
-            }
             await engine.logout()
             _ = await engine.beginLogin()
             syncFromEngine()
@@ -193,9 +189,6 @@ final class AppModel: ObservableObject {
 
     func quit() {
         server.stop()
-        if systemProxyEnabled(), let svc = activeService() {
-            _ = run("/usr/sbin/networksetup", ["-setautoproxystate", svc, "off"])
-        }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
             NSApplication.shared.terminate(nil)
         }
@@ -212,45 +205,8 @@ final class AppModel: ObservableObject {
         return "127.0.0.1:\(port)"
     }
 
-    private func run(_ tool: String, _ args: [String], timeout: TimeInterval = 4) -> (Int32, String) {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: tool)
-        p.arguments = args
-        let pipe = Pipe()
-        p.standardOutput = pipe
-        p.standardError = pipe
-        do { try p.run() } catch { return (-1, error.localizedDescription) }
-        let sem = DispatchSemaphore(value: 0)
-        p.terminationHandler = { _ in sem.signal() }
-        if sem.wait(timeout: .now() + timeout) == .timedOut { p.terminate(); return (-1, "timeout") }
-        let data = pipe.fileHandleForReading.readDataToEndOfFile()
-        return (p.terminationStatus, String(data: data, encoding: .utf8) ?? "")
-    }
-
-    func activeService() -> String? {
-        let (code, out) = run("/usr/sbin/networksetup", ["-listallnetworkservices"])
-        guard code == 0 else { return nil }
-        for line in out.split(separator: "\n") {
-            let svc = line.trimmingCharacters(in: .whitespaces)
-            if svc.isEmpty || svc.hasPrefix("*") || svc.contains("An asterisk") { continue }
-            let (c2, info) = run("/usr/sbin/networksetup", ["-getinfo", svc])
-            if c2 == 0 && info.contains("IP address:") { return svc }
-        }
-        return nil
-    }
-
-    func systemProxyEnabled() -> Bool {
-        guard let svc = activeService() else { return false }
-        let (_, out) = run("/usr/sbin/networksetup", ["-getautoproxyurl", svc])
-        return out.contains("proxy.pac") && out.contains("Enabled: Yes")
-    }
-
     func shutdownSynchronously() {
         server.stop()
-        if let svc = activeService(), systemProxyEnabled() {
-            _ = run("/usr/sbin/networksetup", ["-setautoproxystate", svc, "off"])
-            _ = run("/usr/sbin/networksetup", ["-setautoproxyurl", svc, ""])
-        }
     }
 }
 

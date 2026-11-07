@@ -247,8 +247,6 @@ final class ProxyServer {
                 body = RuleText.surge(store: store, cfg: engine.cfg)
             case "/clash.list":
                 body = RuleText.clash(store: store, cfg: engine.cfg)
-            case "/proxy.pac":
-                body = RuleText.pac(store: store, cfg: engine.cfg)
             default:
                 body = "SDP Proxy\n"
             }

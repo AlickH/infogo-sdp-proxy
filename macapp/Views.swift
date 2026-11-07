@@ -130,7 +130,7 @@ struct MenuBarContent: View {
         VStack(alignment: .leading, spacing: 8) {
             infoRow("账号", model.username.isEmpty ? "-" : model.username)
             infoRow("会话", model.sessionOK ? "正常" : "异常")
-            infoRow("PAC", "http://\(model.uiAddress())/proxy.pac")
+            infoRow("SOCKS", "127.0.0.1:11095")
             infoRow("规则", "http://\(model.uiAddress())/surge.list")
             if !model.resources.isEmpty {
                 Text("可用资源").font(.system(size: 11)).foregroundColor(.secondary)

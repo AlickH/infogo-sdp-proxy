@@ -57,59 +57,6 @@ enum RuleText {
         return lines.joined(separator: "\n") + "\n"
     }
 
-    static func pac(store: RuleStore, cfg: SDPConfig) -> String {
-        var domains: [String] = []
-        var ips: [String] = []
-        var cidrs: [(String, String)] = []
-        var seen = Set<String>()
-        for r in store.snapshot() {
-            let p = r.pattern.lowercased()
-            if p.isEmpty || seen.contains(p) { continue }
-            if store.isExplicitDirect(p, directDomains: cfg.directDomains ?? []) { continue }
-            seen.insert(p)
-            if p.contains("/") {
-                if let (ip, mask) = cidrToPac(p) { cidrs.append((ip, mask)) }
-            } else if p.contains("-") && p.filter({ $0 == "." }).count == 6 {
-                let segs = p.split(separator: "-", maxSplits: 1)
-                if segs.count == 2 {
-                    for c in ipRangeToCIDRs(String(segs[0]), String(segs[1])) {
-                        if let (ip, mask) = cidrToPac(c) { cidrs.append((ip, mask)) }
-                    }
-                }
-            } else if PublicDNS.isIPv4(p) {
-                ips.append(p)
-            } else if p.contains(".") {
-                domains.append(p)
-            }
-        }
-        let (_, httpPort) = SDPConfig.splitHostPort(cfg.httpListen)
-        let proxy = "PROXY 127.0.0.1:\(httpPort)"
-        var js = "var DOMAINS = [\(quoted(domains))];\n"
-        js += "var IPS = [\(quoted(ips))];\n"
-        js += "var CIDRS = [\(cidrs.map { "[\"\($0.0)\",\"\($0.1)\"]" }.joined(separator: ","))];\n\n"
-        js += """
-        function isIPv4(h){return /^(\\d{1,3}\\.){3}\\d{1,3}$/.test(h);}
-        function FindProxyForURL(url, host) {
-          host = host.toLowerCase();
-          if (host === "localhost" || host === "127.0.0.1") return "DIRECT";
-          if (isInNet(host, "127.0.0.0", "255.0.0.0")) return "DIRECT";
-          if (host === "sdp.cscec5b.com.cn") return "DIRECT";
-          if (host === "app.cscec5b.com.cn") return "DIRECT";
-          for (var i = 0; i < DOMAINS.length; i++) {
-            var d = DOMAINS[i];
-            if (host === d || (host.length > d.length && host.slice(-(d.length+1)) === "." + d))
-              return "\(proxy)";
-          }
-          if (isIPv4(host)) {
-            for (var j = 0; j < IPS.length; j++) if (host === IPS[j]) return "\(proxy)";
-            for (var k = 0; k < CIDRS.length; k++) if (isInNet(host, CIDRS[k][0], CIDRS[k][1])) return "\(proxy)";
-          }
-          return "DIRECT";
-        }
-        """
-        return js
-    }
-
     // MARK: - helpers
 
     static func rulePort(_ cfg: SDPConfig) -> UInt16 {
