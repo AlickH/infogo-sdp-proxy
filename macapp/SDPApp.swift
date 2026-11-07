@@ -67,6 +67,11 @@ final class AppModel: ObservableObject {
 
     let engine: Engine
     let ne = NEManager()
+    let wg = WGManager()
+
+    @Published var wgStatus = "未启用"
+    @Published var wgActive = false
+    @Published var wgError = ""
     private let server: ProxyServer
     private var proxyTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
@@ -100,6 +105,18 @@ final class AppModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        wg.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.wgStatus = self.wg.statusText
+                    self.wgActive = self.wg.active
+                    self.wgError = self.wg.error
+                }
+            }
+            .store(in: &cancellables)
+
         server.start()
         Task { @MainActor in
             await engine.start()
@@ -111,6 +128,9 @@ final class AppModel: ObservableObject {
             if ProcessInfo.processInfo.environment["SDP_NE_AUTO"] == "1" {
                 toggleNE()
             }
+            if ProcessInfo.processInfo.environment["SDP_WG_AUTO"] == "1" {
+                toggleWG()
+            }
         }
 
         proxyTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
@@ -118,6 +138,7 @@ final class AppModel: ObservableObject {
         }
         refreshSystemProxyState()
         ne.refreshStatus()
+        wg.refresh()
     }
 
     func syncFromEngine() {
@@ -155,6 +176,18 @@ final class AppModel: ObservableObject {
 
     func onScanned() {
         Task { await engine.onScanned() }
+    }
+
+    func saveWGConfig(_ cfg: WGConfig) {
+        wg.saveConfig(cfg)
+    }
+
+    func toggleWG() {
+        if wg.active {
+            wg.disable()
+        } else {
+            wg.enable()
+        }
     }
 
     func toggleNE() {

@@ -11,6 +11,8 @@ struct MenuBarContent: View {
             Divider()
             content
                 .frame(maxWidth: .infinity, alignment: .leading)
+            Divider()
+            wireGuardSection
             if model.showLogs { logsView }
         }
         .padding(14)
@@ -221,6 +223,67 @@ struct MenuBarContent: View {
             Text(k).font(.system(size: 11)).foregroundColor(.secondary).frame(width: 36, alignment: .leading)
             Text(v).font(.system(size: 11, design: .monospaced)).textSelection(.enabled)
             Spacer()
+        }
+    }
+
+    // MARK: - WireGuard
+
+    @State private var showWGForm: Bool = false
+    @State private var wgDraft = WGConfig()
+
+    private var wireGuardSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("WireGuard").font(.system(size: 11, weight: .medium))
+                Text(model.wgStatus)
+                    .font(.system(size: 10))
+                    .foregroundColor(model.wgActive ? .green : .secondary)
+                Spacer()
+                Button(showWGForm ? "收起" : "配置") {
+                    if !showWGForm { wgDraft = model.wg.config }
+                    showWGForm.toggle()
+                }
+                .buttonStyle(.borderless)
+                .font(.system(size: 10))
+                if showWGForm || model.wg.configured {
+                    Button(model.wgActive ? "断开" : "连接") {
+                        if showWGForm { model.saveWGConfig(wgDraft) }
+                        model.toggleWG()
+                    }
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 10))
+                }
+            }
+            if !model.wgError.isEmpty {
+                Text(model.wgError).font(.system(size: 10)).foregroundColor(.red).lineLimit(2)
+            }
+            if showWGForm {
+                VStack(spacing: 4) {
+                    wgField("私钥", $wgDraft.privateKey)
+                    wgField("地址", $wgDraft.address, placeholder: "10.0.0.2/32")
+                    wgField("DNS", $wgDraft.dns, placeholder: "1.1.1.1")
+                    wgField("对端公钥", $wgDraft.peerPublicKey)
+                    wgField("Endpoint", $wgDraft.endpoint, placeholder: "host:51820")
+                    wgField("AllowedIPs", $wgDraft.allowedIPs, placeholder: "0.0.0.0/0")
+                    wgField("Keepalive", $wgDraft.keepalive, placeholder: "25")
+                    HStack {
+                        Spacer()
+                        Button("保存") { model.saveWGConfig(wgDraft) }
+                            .buttonStyle(.borderless)
+                            .font(.system(size: 10))
+                    }
+                }
+            }
+        }
+    }
+
+    private func wgField(_ label: String, _ value: Binding<String>, placeholder: String = "") -> some View {
+        HStack(spacing: 6) {
+            Text(label).font(.system(size: 10)).foregroundColor(.secondary)
+                .frame(width: 58, alignment: .leading)
+            TextField(placeholder, text: value)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 10, design: .monospaced))
         }
     }
 
