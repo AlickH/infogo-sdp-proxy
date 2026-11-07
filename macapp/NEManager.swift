@@ -62,6 +62,21 @@ final class NEManager: NSObject, ObservableObject {
 
     // MARK: - 状态
 
+    /// 已保存过配置时，App 启动后自动恢复透明代理
+    func autoStartIfConfigured() {
+        NETransparentProxyManager.loadAllFromPreferences { [weak self] managers, _ in
+            guard let self = self, let mgr = managers?.first else { return }
+            self.manager = mgr
+            if mgr.isEnabled, mgr.connection.status == .disconnected {
+                self.dbg("autoStart: starting saved config")
+                do { try mgr.connection.startVPNTunnel() } catch {
+                    self.dbg("autoStart failed: \(error)")
+                }
+            }
+            self.refreshStatus()
+        }
+    }
+
     func refreshStatus() {
         NETransparentProxyManager.loadAllFromPreferences { [weak self] managers, error in
             guard let self = self else { return }
