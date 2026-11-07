@@ -132,14 +132,21 @@ final class WGManager: NSObject, ObservableObject {
                     self.statusText = "配置保存失败"
                     return
                 }
-                do {
-                    try mgr.connection.startVPNTunnel()
-                    self.statusText = "正在连接…"
-                } catch {
-                    self.error = error.localizedDescription
-                    self.statusText = "启动失败"
+                mgr.loadFromPreferences { loadError in
+                    if let loadError = loadError {
+                        self.error = loadError.localizedDescription
+                        self.statusText = "配置重载失败"
+                        return
+                    }
+                    do {
+                        try mgr.connection.startVPNTunnel()
+                        self.statusText = "正在连接…"
+                    } catch {
+                        self.error = error.localizedDescription
+                        self.statusText = "启动失败"
+                    }
+                    self.refresh()
                 }
-                self.refresh()
             }
         }
     }

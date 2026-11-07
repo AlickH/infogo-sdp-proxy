@@ -16,6 +16,16 @@ final class NEManager: NSObject, ObservableObject {
     private var manager: NETransparentProxyManager?
     private var socksPort: UInt16 = 11095
     private var observer: NSObjectProtocol?
+
+    private func dbg(_ msg: String) {
+        let line = "\(Date()) \(msg)\n"
+        let path = NSHomeDirectory() + "/.sdp-proxy/ne.log"
+        if let h = FileHandle(forWritingAtPath: path) {
+            h.seekToEndOfFile(); h.write(Data(line.utf8)); h.closeFile()
+        } else {
+            try? Data(line.utf8).write(to: URL(fileURLWithPath: path))
+        }
+    }
     private let queue = DispatchQueue.main
 
     override init() {
@@ -35,6 +45,7 @@ final class NEManager: NSObject, ObservableObject {
 
     func enable(socksPort: UInt16) {
         self.socksPort = socksPort
+        dbg("enable() socks=\(socksPort)")
         NSLog("[NE] 请求安装扩展 %@ (socks %d)", Self.extensionID, Int(socksPort))
         statusText = "正在安装扩展…"
         let req = OSSystemExtensionRequest.activationRequest(
@@ -64,6 +75,7 @@ final class NEManager: NSObject, ObservableObject {
                 return
             }
             self.manager = mgr
+            self.dbg("refresh status=\(mgr.connection.status.rawValue) enabled=\(mgr.isEnabled)")
             switch mgr.connection.status {
             case .connected:
                 self.statusText = "全局接管中"
@@ -105,6 +117,7 @@ final class NEManager: NSObject, ObservableObject {
             mgr.localizedDescription = "SDP 全局接管"
             mgr.isEnabled = true
             mgr.saveToPreferences { error in
+                self.dbg("saveToPreferences error=\(String(describing: error))")
                 if let error = error {
                     self.lastError = error.localizedDescription
                     self.statusText = "配置保存失败"
@@ -139,6 +152,7 @@ extension NEManager: OSSystemExtensionRequestDelegate {
                  didFinishWithResult result: OSSystemExtensionRequest.Result) {
         switch result {
         case .completed:
+            dbg("activation completed")
             statusText = "扩展已安装"
             configureAndStart()
         case .willCompleteAfterReboot:

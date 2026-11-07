@@ -1,0 +1,2 @@
+import NetworkExtension
+NEProvider.startSystemExtensionMode()

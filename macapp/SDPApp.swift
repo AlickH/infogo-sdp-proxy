@@ -98,6 +98,7 @@ final class AppModel: ObservableObject {
                     self.neStatus = self.ne.statusText
                     self.neActive = self.ne.active
                     if !self.ne.lastError.isEmpty { self.lastError = self.ne.lastError }
+                    self.engine.log("[NE] \(self.ne.statusText)\(self.ne.lastError.isEmpty ? "" : " err=\(self.ne.lastError)")")
                 }
             }
             .store(in: &cancellables)
@@ -131,6 +132,7 @@ final class AppModel: ObservableObject {
         }
 
         ne.refreshStatus()
+        ne.autoStartIfConfigured()
         wg.refresh()
     }
 
