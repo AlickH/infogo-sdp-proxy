@@ -12,16 +12,13 @@ struct QRContainer: View {
 
     var body: some View {
         ZStack {
+            QRWebView(url: url, onLoaded: {
+                withAnimation(.easeOut(duration: 0.18)) { loaded = true }
+            }, onScanned: onScanned)
+            .opacity(loaded && !url.isEmpty ? 1 : 0)
+
             if !loaded || url.isEmpty {
                 ProgressView()
-            } else {
-                Color.clear
-            }
-            if !url.isEmpty {
-                QRWebView(url: url, onLoaded: {
-                    withAnimation(.easeOut(duration: 0.18)) { loaded = true }
-                }, onScanned: onScanned)
-                .opacity(loaded ? 1 : 0)
             }
         }
         .onChange(of: url) { _ in loaded = false }

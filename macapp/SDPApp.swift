@@ -95,7 +95,7 @@ final class AppModel: ObservableObject {
             }
         }
 
-        proxyTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+        proxyTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             self?.refreshSystemProxyState()
         }
         refreshSystemProxyState()
@@ -200,7 +200,7 @@ final class AppModel: ObservableObject {
             guard let self = self else { return }
             let on = self.systemProxyEnabled()
             DispatchQueue.main.async {
-                self.proxyEnabled = on
+                if self.proxyEnabled != on { self.proxyEnabled = on }
                 self.proxyCheckBusy = false
             }
         }
