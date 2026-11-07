@@ -62,6 +62,7 @@ enum PublicDNS {
                 i += 1 + len
             }
         }
+        skipName()
         guard i + 4 <= p.count else { return nil }
         i += 4 // QTYPE/QCLASS
         let ancount = Int(p[6]) << 8 | Int(p[7])

@@ -20,8 +20,8 @@ final class Engine: ObservableObject {
     private var serverInfo: [String: Any]?
 
     private var pollTask: Task<Void, Never>?
-    private var sessionTimer: Timer?
-    private var policyTimer: Timer?
+    private var sessionTimer: DispatchSourceTimer?
+    private var policyTimer: DispatchSourceTimer?
     private let logLock = NSLock()
 
     init(cfgPath: String = SDPConfig.defaultPath) {
@@ -46,7 +46,18 @@ final class Engine: ObservableObject {
         logs.append(line)
         if logs.count > 300 { logs.removeFirst(logs.count - 300) }
         logLock.unlock()
+        appendToFile(line)
         DispatchQueue.main.async { NotificationCenter.default.post(name: .engineLog, object: line) }
+    }
+
+    private func appendToFile(_ line: String) {
+        let path = NSHomeDirectory() + "/.sdp-proxy/app.log"
+        let data = Data((line + "\n").utf8)
+        if let h = FileHandle(forWritingAtPath: path) {
+            h.seekToEndOfFile(); h.write(data); h.closeFile()
+        } else {
+            try? data.write(to: URL(fileURLWithPath: path))
+        }
     }
 
     static let df: DateFormatter = {
@@ -74,16 +85,31 @@ final class Engine: ObservableObject {
     }
 
     private func startTimers() {
-        sessionTimer?.invalidate()
-        sessionTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        stopTimers()
+        let queue = DispatchQueue(label: "sdp.timers")
+
+        let st = DispatchSource.makeTimerSource(queue: queue)
+        st.schedule(deadline: .now() + 60, repeating: 60)
+        st.setEventHandler { [weak self] in
             guard let self = self else { return }
             Task { await self.checkSession() }
         }
-        policyTimer?.invalidate()
-        policyTimer = Timer.scheduledTimer(withTimeInterval: 600, repeats: true) { [weak self] _ in
+        st.resume()
+        sessionTimer = st
+
+        let pt = DispatchSource.makeTimerSource(queue: queue)
+        pt.schedule(deadline: .now() + 600, repeating: 600)
+        pt.setEventHandler { [weak self] in
             guard let self = self else { return }
             Task { await self.fetchPolicy() }
         }
+        pt.resume()
+        policyTimer = pt
+    }
+
+    private func stopTimers() {
+        sessionTimer?.cancel(); sessionTimer = nil
+        policyTimer?.cancel(); policyTimer = nil
     }
 
     // MARK: - 登录
@@ -236,6 +262,7 @@ final class Engine: ObservableObject {
                                         params: ["deviceid": cfg.deviceID, "listType": "0", "queryStr": ""])
             let tokenValid = tr.errCode != "21120055"
             let ok = (sessionStatus == "0" || sessionStatus == "8") && tokenValid
+            log("[会话] 检查: \(ok ? "正常" : "失效")")
             DispatchQueue.main.async {
                 self.sessionOK = ok
                 if ok {
@@ -319,8 +346,7 @@ final class Engine: ObservableObject {
         api.token = nil
         cfg.token = ""
         try? cfg.save(path: cfgPath)
-        sessionTimer?.invalidate()
-        policyTimer?.invalidate()
+        stopTimers()
         state = "login_required"
         sessionOK = false
         log("[退出] 已断开连接")
