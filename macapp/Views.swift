@@ -239,19 +239,19 @@ struct PanelStatusIcon: View {
         if #available(macOS 15.0, *) {
             Image(systemName: symbol)
                 .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(connected ? .accentColor : .secondary)
+                .foregroundColor(.primary)
                 .symbolEffect(.pulse, options: .repeating, isActive: connected)
                 .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer), options: .nonRepeating))
         } else if #available(macOS 14.0, *) {
             Image(systemName: symbol)
                 .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(connected ? .accentColor : .secondary)
+                .foregroundColor(.primary)
                 .symbolEffect(.pulse, options: .repeating, isActive: connected)
                 .contentTransition(.symbolEffect(.replace))
         } else {
             Image(systemName: symbol)
                 .font(.system(size: 18, weight: .semibold))
-                .foregroundColor(connected ? .accentColor : .secondary)
+                .foregroundColor(.primary)
         }
     }
 }

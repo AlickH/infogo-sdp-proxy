@@ -15,6 +15,8 @@ struct SDPApp: App {
         } label: {
             Image(systemName: model.state == "connected"
                   ? "network.badge.shield.half.filled" : "network.slash")
+                .fontWeight(.heavy)
+                .imageScale(.large)
         }
         .menuBarExtraStyle(.window)
     }
