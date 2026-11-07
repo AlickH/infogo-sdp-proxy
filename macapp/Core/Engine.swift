@@ -53,8 +53,13 @@ final class Engine: ObservableObject {
         DispatchQueue.main.async { NotificationCenter.default.post(name: .engineLog, object: line) }
     }
 
+    private var logPath: String {
+        let dir = (cfgPath as NSString).deletingLastPathComponent
+        return (dir.isEmpty ? NSHomeDirectory() + "/.sdp-proxy" : dir) + "/app.log"
+    }
+
     private func appendToFile(_ line: String) {
-        let path = NSHomeDirectory() + "/.sdp-proxy/app.log"
+        let path = logPath
         let data = Data((line + "\n").utf8)
         if let h = FileHandle(forWritingAtPath: path) {
             h.seekToEndOfFile(); h.write(data); h.closeFile()
