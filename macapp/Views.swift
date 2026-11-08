@@ -18,13 +18,7 @@ struct MenuBarContent: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            if model.showLogs {
-                Divider()
-                logsView
-                    .frame(height: model.showLogs ? 170 : 0)
-                    .clipped()
-                    .opacity(model.showLogs ? 1 : 0)
-            }
+            logsContainer
         }
         .padding(14)
         .frame(width: 380)
@@ -471,6 +465,17 @@ struct MenuBarContent: View {
 
     private var logText: String {
         model.tab == .wireguard ? model.wgLogsText : model.logsText
+    }
+
+    private var logsContainer: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Divider()
+            logsView
+        }
+        .frame(height: model.showLogs ? 178 : 0, alignment: .top)
+        .clipped()
+        .opacity(model.showLogs ? 1 : 0)
+        .animation(.snappy(duration: 0.24), value: model.showLogs)
     }
 
     private var logsView: some View {
