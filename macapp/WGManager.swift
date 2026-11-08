@@ -3,7 +3,9 @@ import NetworkExtension
 import SystemExtensions
 import Combine
 
-struct WGConfig: Codable, Equatable {
+struct WGConfig: Codable, Equatable, Identifiable {
+    var id = UUID()
+    var name = ""
     var privateKey = ""
     var address = ""
     var dns = ""
@@ -11,9 +13,41 @@ struct WGConfig: Codable, Equatable {
     var endpoint = ""
     var allowedIPs = "0.0.0.0/0"
     var keepalive = "25"
+    var mtu = "1420"
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? ""
+        privateKey = try c.decodeIfPresent(String.self, forKey: .privateKey) ?? ""
+        address = try c.decodeIfPresent(String.self, forKey: .address) ?? ""
+        dns = try c.decodeIfPresent(String.self, forKey: .dns) ?? ""
+        peerPublicKey = try c.decodeIfPresent(String.self, forKey: .peerPublicKey) ?? ""
+        endpoint = try c.decodeIfPresent(String.self, forKey: .endpoint) ?? ""
+        allowedIPs = try c.decodeIfPresent(String.self, forKey: .allowedIPs) ?? "0.0.0.0/0"
+        keepalive = try c.decodeIfPresent(String.self, forKey: .keepalive) ?? "25"
+        mtu = try c.decodeIfPresent(String.self, forKey: .mtu) ?? "1420"
+    }
+
+    var displayName: String {
+        if !name.isEmpty { return name }
+        if !endpoint.isEmpty { return endpoint }
+        return "未命名配置"
+    }
+
+    var valid: Bool {
+        !privateKey.isEmpty && !peerPublicKey.isEmpty && !endpoint.isEmpty
+    }
 }
 
-/// WireGuard 系统扩展管理（Packet Tunnel）
+struct WGStore: Codable {
+    var configs: [WGConfig] = []
+    var activeID: UUID?
+}
+
+/// WireGuard 系统扩展管理（Packet Tunnel），支持多配置
 final class WGManager: NSObject, ObservableObject {
     static let extensionID = "com.alick.sdp-proxy.wg"
     static var configPath: String { NSHomeDirectory() + "/.sdp-proxy/wireguard.json" }
@@ -21,7 +55,8 @@ final class WGManager: NSObject, ObservableObject {
     @Published var statusText = "未启用"
     @Published var active = false
     @Published var error = ""
-    @Published var config = WGConfig()
+    @Published var configs: [WGConfig] = []
+    @Published var activeID: UUID?
 
     private var manager: NETunnelProviderManager?
     private var observer: NSObjectProtocol?
@@ -29,7 +64,7 @@ final class WGManager: NSObject, ObservableObject {
 
     override init() {
         super.init()
-        loadConfig()
+        loadStore()
         observer = NotificationCenter.default.addObserver(
             forName: .NEVPNStatusDidChange, object: nil, queue: .main
         ) { [weak self] note in
@@ -44,22 +79,97 @@ final class WGManager: NSObject, ObservableObject {
         if let o = observer { NotificationCenter.default.removeObserver(o) }
     }
 
-    func loadConfig() {
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: Self.configPath)),
-              let cfg = try? JSONDecoder().decode(WGConfig.self, from: data) else { return }
-        config = cfg
+    var activeConfig: WGConfig? {
+        configs.first { $0.id == activeID } ?? configs.first
     }
 
-    func saveConfig(_ cfg: WGConfig) {
-        config = cfg
+    // MARK: - 配置存储
+
+    func loadStore() {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: Self.configPath)) else { return }
+        let dec = JSONDecoder()
+        if let store = try? dec.decode(WGStore.self, from: data) {
+            configs = store.configs
+            activeID = store.activeID
+        } else if let old = try? dec.decode(WGConfig.self, from: data) {
+            // 兼容旧的单配置格式
+            var cfg = old
+            if cfg.name.isEmpty { cfg.name = cfg.endpoint }
+            configs = [cfg]
+            activeID = cfg.id
+            persist()   // 旧单配置格式立即迁移为多配置格式
+        }
+        if activeConfig == nil { activeID = configs.first?.id }
+    }
+
+    private func persist() {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted]
-        try? enc.encode(cfg).write(to: URL(fileURLWithPath: Self.configPath), options: .atomic)
+        let store = WGStore(configs: configs, activeID: activeID)
+        try? enc.encode(store).write(to: URL(fileURLWithPath: Self.configPath), options: .atomic)
     }
 
-    var configured: Bool {
-        !config.privateKey.isEmpty && !config.peerPublicKey.isEmpty && !config.endpoint.isEmpty
+    func select(_ id: UUID) {
+        activeID = id
+        persist()
     }
+
+    func upsert(_ cfg: WGConfig) {
+        var c = cfg
+        if c.name.isEmpty { c.name = c.endpoint }
+        if let idx = configs.firstIndex(where: { $0.id == c.id }) {
+            configs[idx] = c
+        } else {
+            configs.append(c)
+        }
+        activeID = c.id
+        persist()
+    }
+
+    func removeActive() {
+        guard let id = activeID else { return }
+        configs.removeAll { $0.id == id }
+        activeID = configs.first?.id
+        persist()
+    }
+
+    // MARK: - 导入
+
+    /// 解析 wg-quick 格式配置文本
+    static func parseWgQuickConfig(_ text: String, fallbackName: String) -> WGConfig? {
+        var cfg = WGConfig()
+        var section = ""
+        for raw in text.components(separatedBy: .newlines) {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            if line.isEmpty || line.hasPrefix("#") { continue }
+            if line.hasPrefix("[") {
+                section = line.lowercased()
+                continue
+            }
+            let parts = line.split(separator: "=", maxSplits: 1).map {
+                $0.trimmingCharacters(in: .whitespaces)
+            }
+            guard parts.count == 2 else { continue }
+            let key = parts[0].lowercased()
+            let value = parts[1]
+            switch (section, key) {
+            case ("[interface]", "privatekey"): cfg.privateKey = value
+            case ("[interface]", "address"): cfg.address = value
+            case ("[interface]", "dns"): cfg.dns = value
+            case ("[interface]", "mtu"): cfg.mtu = value
+            case ("[peer]", "publickey"): cfg.peerPublicKey = value
+            case ("[peer]", "endpoint"): cfg.endpoint = value
+            case ("[peer]", "allowedips"): cfg.allowedIPs = value
+            case ("[peer]", "persistentkeepalive"): cfg.keepalive = value
+            default: break
+            }
+        }
+        guard cfg.valid else { return nil }
+        cfg.name = cfg.endpoint.isEmpty ? fallbackName : cfg.endpoint
+        return cfg
+    }
+
+    // MARK: - 连接
 
     func enable() {
         NSLog("[WG] 请求安装扩展 %@", Self.extensionID)
@@ -115,8 +225,8 @@ final class WGManager: NSObject, ObservableObject {
     }
 
     private func configureAndStart() {
-        guard configured else {
-            statusText = "扩展已安装，请填写配置"
+        guard let cfg = activeConfig, cfg.valid else {
+            statusText = "扩展已安装，请填写或导入配置"
             return
         }
         NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, err in
@@ -128,16 +238,18 @@ final class WGManager: NSObject, ObservableObject {
 
             let proto = NETunnelProviderProtocol()
             proto.providerBundleIdentifier = Self.extensionID
-            proto.serverAddress = self.config.endpoint
-            proto.providerConfiguration = [
-                "privateKey": self.config.privateKey,
-                "addresses": self.splitList(self.config.address),
-                "dns": self.splitList(self.config.dns),
-                "peerPublicKey": self.config.peerPublicKey,
-                "endpoint": self.config.endpoint,
-                "allowedIPs": self.splitList(self.config.allowedIPs),
-                "persistentKeepalive": Int(self.config.keepalive) ?? 25,
+            proto.serverAddress = cfg.endpoint
+            var providerConfig: [String: Any] = [
+                "privateKey": cfg.privateKey,
+                "addresses": self.splitList(cfg.address),
+                "dns": self.splitList(cfg.dns),
+                "peerPublicKey": cfg.peerPublicKey,
+                "endpoint": cfg.endpoint,
+                "allowedIPs": self.splitList(cfg.allowedIPs),
+                "persistentKeepalive": Int(cfg.keepalive) ?? 25,
             ]
+            if let mtu = Int(cfg.mtu), mtu >= 576 { providerConfig["mtu"] = mtu }
+            proto.providerConfiguration = providerConfig
             mgr.protocolConfiguration = proto
             mgr.localizedDescription = "SDP WireGuard"
             mgr.isEnabled = true
@@ -153,12 +265,20 @@ final class WGManager: NSObject, ObservableObject {
                         self.statusText = "配置重载失败"
                         return
                     }
-                    do {
-                        try mgr.connection.startVPNTunnel()
-                        self.statusText = "正在连接…"
-                    } catch {
-                        self.error = error.localizedDescription
-                        self.statusText = "启动失败"
+                    if mgr.connection.status == .connected || mgr.connection.status == .connecting {
+                        mgr.connection.stopVPNTunnel()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                            do { try mgr.connection.startVPNTunnel(); self.statusText = "正在连接…" }
+                            catch { self.error = error.localizedDescription; self.statusText = "启动失败" }
+                        }
+                    } else {
+                        do {
+                            try mgr.connection.startVPNTunnel()
+                            self.statusText = "正在连接…"
+                        } catch {
+                            self.error = error.localizedDescription
+                            self.statusText = "启动失败"
+                        }
                     }
                     self.refresh()
                 }

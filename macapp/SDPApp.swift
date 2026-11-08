@@ -41,6 +41,11 @@ struct MenuBarIcon: View {
     }
 }
 
+enum PanelTab: String, CaseIterable {
+    case sdp = "SDP"
+    case wireguard = "WireGuard"
+}
+
 struct ResItem: Identifiable {
     let id = UUID()
     let domain: String
@@ -71,6 +76,10 @@ final class AppModel: ObservableObject {
     @Published var wgStatus = "未启用"
     @Published var wgActive = false
     @Published var wgError = ""
+    @Published var wgConfigs: [WGConfig] = []
+    @Published var wgActiveID: UUID?
+    @Published var wgDraft = WGConfig()
+    @Published var tab: PanelTab = .sdp
     private let server: ProxyServer
     private var cancellables = Set<AnyCancellable>()
 
@@ -111,6 +120,8 @@ final class AppModel: ObservableObject {
                     self.wgStatus = self.wg.statusText
                     self.wgActive = self.wg.active
                     self.wgError = self.wg.error
+                    self.wgConfigs = self.wg.configs
+                    self.wgActiveID = self.wg.activeID
                 }
             }
             .store(in: &cancellables)
@@ -141,6 +152,7 @@ final class AppModel: ObservableObject {
             ne.autoStartIfConfigured()
         }
         wg.refresh()
+        wgDraft = wg.activeConfig ?? WGConfig()
     }
 
     private var syncScheduled = false
@@ -215,13 +227,39 @@ final class AppModel: ObservableObject {
     }
 
     func saveWGConfig(_ cfg: WGConfig) {
-        wg.saveConfig(cfg)
+        wg.upsert(cfg)
+    }
+
+    func saveWGDraft() {
+        wg.upsert(wgDraft)
+    }
+
+    func selectWG(_ id: UUID) {
+        wg.select(id)
+        if let c = wg.activeConfig { wgDraft = c }
+    }
+
+    func deleteActiveWG() {
+        wg.removeActive()
+        wgDraft = wg.activeConfig ?? WGConfig()
+    }
+
+    func importWG(text: String, name: String) -> Bool {
+        guard let cfg = WGManager.parseWgQuickConfig(text, fallbackName: name) else { return false }
+        wg.upsert(cfg)
+        wgDraft = cfg
+        return true
     }
 
     func toggleWG() {
         if wg.active {
             wg.disable()
         } else {
+            if wgDraft.valid { wg.upsert(wgDraft) }
+            guard wg.activeConfig?.valid == true else {
+                wgError = "请先填写或导入 WireGuard 配置"
+                return
+            }
             wg.enable()
         }
     }
