@@ -215,17 +215,15 @@ final class Provider: NEPacketTunnelProvider {
             // 先回 SOCKS 成功，让 hev 发送 TLS ClientHello
             try await client.send(Data([0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0]))
 
-            // 嗅探 SNI：等第一段数据（ClientHello）
+            // 嗅探 SNI：直接读第一段数据（ClientHello），不做超时 race
             var peek = Data()
-            if let chunk = try await withTimeout(2.0, { try await client.receive() }) {
+            if let chunk = try await client.receive() {
                 peek.append(chunk)
             }
             var sni = Self.parseSNI(peek)
-            if sni == nil, peek.count >= 5 {
-                if let more = try await withTimeout(0.8, { try await client.receive() }) {
-                    peek.append(more)
-                    sni = Self.parseSNI(peek)
-                }
+            if sni == nil, let more = try await client.receive() {
+                peek.append(more)
+                sni = Self.parseSNI(peek)
             }
             let target = sni ?? host
             log("socks \(host):\(port) sni=\(sni ?? "-")")
@@ -246,11 +244,29 @@ final class Provider: NEPacketTunnelProvider {
                 log("no route for \(target):\(port) resid=\(resid)")
                 conn.cancel(); return
             }
+            log("peek \(peek.count) bytes, sending to tunnel")
             if !peek.isEmpty { try await up.send(peek) }
-            await relay(client, up)
+            log("relay start")
+            async let a: Void = Self.pipe(client, up, "c->t", log)
+            async let b: Void = Self.pipe(up, client, "t->c", log)
+            _ = await (a, b)
+            log("relay end")
         } catch {
             log("socks error \(error)")
             conn.cancel()
+        }
+    }
+
+    static func pipe(_ from: ByteStream, _ to: ByteStream, _ label: String,
+                     _ log: @escaping (String) -> Void) async {
+        do {
+            while true {
+                guard let d = try await from.receive() else { break }
+                log("\(label) \(d.count) bytes")
+                try await to.send(d)
+            }
+        } catch {
+            log("\(label) error \(error)")
         }
     }
 
