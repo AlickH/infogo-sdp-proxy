@@ -11,7 +11,7 @@ final class NEManager: NSObject, ObservableObject {
     @Published var active = false
     @Published var lastError = ""
 
-    private var manager: NETransparentProxyManager?
+    private var manager: NETunnelProviderManager?
     private var socksPort: UInt16 = 11095
     private var observer: NSObjectProtocol?
     private var refreshScheduled = false
@@ -52,7 +52,7 @@ final class NEManager: NSObject, ObservableObject {
 
     /// 停止并禁用已保存的透明代理配置（用于紧急恢复网络）
     func disableAndRemoveConfig(completion: @escaping () -> Void = {}) {
-        NETransparentProxyManager.loadAllFromPreferences { [weak self] managers, _ in
+        NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, _ in
             guard let self = self else { completion(); return }
             let mgr = managers?.first
             mgr?.connection.stopVPNTunnel()
@@ -70,7 +70,7 @@ final class NEManager: NSObject, ObservableObject {
 
     /// 已保存过配置时，App 启动后自动恢复透明代理
     func autoStartIfConfigured() {
-        NETransparentProxyManager.loadAllFromPreferences { [weak self] managers, _ in
+        NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, _ in
             guard let self = self, let mgr = managers?.first else { return }
             self.manager = mgr
             if mgr.isEnabled, mgr.connection.status == .disconnected {
@@ -92,7 +92,7 @@ final class NEManager: NSObject, ObservableObject {
     }
 
     func refreshStatus() {
-        NETransparentProxyManager.loadAllFromPreferences { [weak self] managers, error in
+        NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, error in
             guard let self = self else { return }
             if let error = error {
                 self.lastError = error.localizedDescription
@@ -127,7 +127,7 @@ final class NEManager: NSObject, ObservableObject {
     private func configureAndStart() {
         if configuring { return }
         configuring = true
-        NETransparentProxyManager.loadAllFromPreferences { [weak self] managers, error in
+        NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, error in
             guard let self = self else { return }
             defer { self.configuring = false }
             if let error = error {
@@ -135,14 +135,14 @@ final class NEManager: NSObject, ObservableObject {
                 self.statusText = "配置读取失败"
                 return
             }
-            let mgr = managers?.first ?? NETransparentProxyManager()
+            let mgr = managers?.first ?? NETunnelProviderManager()
             self.manager = mgr
             let proto = NETunnelProviderProtocol()
             proto.providerBundleIdentifier = Self.extensionID
             proto.serverAddress = "127.0.0.1"
             proto.providerConfiguration = [
-                "socksHost": "127.0.0.1",
-                "socksPort": Int(self.socksPort),
+                "routes": ["172.30.0.0/16", "10.240.0.0/16"],
+                "mtu": 1400,
             ]
             mgr.protocolConfiguration = proto
             mgr.localizedDescription = "SDP 全局接管"
