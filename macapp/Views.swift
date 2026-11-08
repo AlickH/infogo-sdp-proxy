@@ -25,20 +25,16 @@ struct MenuBarContent: View {
         }
         .padding(14)
         .frame(width: 380)
+        .fixedSize(horizontal: false, vertical: true)
+        .animation(.snappy(duration: 0.2), value: model.showLogs)
+        .animation(.snappy(duration: 0.2), value: showResources)
     }
 
     // MARK: - 头部
 
     private var header: some View {
-        HStack(alignment: .top, spacing: 8) {
-            if model.tab == .sdp {
-                PanelStatusIcon(state: model.state)
-                    .padding(.top, 2)
-            } else {
-                Image(systemName: model.wgActive ? "checkmark.shield.fill" : "shield.slash.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .padding(.top, 2)
-            }
+        HStack(alignment: .center, spacing: 8) {
+            headerIcon
             VStack(alignment: .leading, spacing: 4) {
                 Text(model.tab == .sdp ? "SDP 代理" : "WireGuard")
                     .font(.system(size: 15, weight: .semibold))
@@ -107,6 +103,40 @@ struct MenuBarContent: View {
         .padding(3)
         .background(Capsule().fill(Color.primary.opacity(0.07)))
         .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var headerIcon: some View {
+        if model.tab == .sdp {
+            let connected = model.state == "connected"
+            symbolIcon(connected ? "network.badge.shield.half.filled" : "network.slash",
+                       active: connected)
+        } else {
+            symbolIcon(model.wgActive ? "point.3.filled.connected.trianglepath.dotted"
+                                      : "point.3.connected.trianglepath.dotted",
+                       active: model.wgActive)
+        }
+    }
+
+    @ViewBuilder
+    private func symbolIcon(_ name: String, active: Bool) -> some View {
+        if #available(macOS 15.0, *) {
+            Image(systemName: name)
+                .font(.system(size: 18, weight: .semibold))
+                .frame(width: 24, height: 24)
+                .symbolEffect(.pulse, options: .repeating, isActive: active)
+                .contentTransition(.symbolEffect(.replace.magic(fallback: .downUp.byLayer), options: .nonRepeating))
+        } else if #available(macOS 14.0, *) {
+            Image(systemName: name)
+                .font(.system(size: 18, weight: .semibold))
+                .frame(width: 24, height: 24)
+                .symbolEffect(.pulse, options: .repeating, isActive: active)
+                .contentTransition(.symbolEffect(.replace))
+        } else {
+            Image(systemName: name)
+                .font(.system(size: 18, weight: .semibold))
+                .frame(width: 24, height: 24)
+        }
     }
 
     private var headerBadgeText: String {
