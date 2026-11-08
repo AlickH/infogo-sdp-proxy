@@ -12,7 +12,7 @@ final class NEManager: NSObject, ObservableObject {
     @Published var lastError = ""
 
     private var manager: NETunnelProviderManager?
-    private var socksPort: UInt16 = 11095
+    private var pendingConfig: [String: Any] = [:]
     private var observer: NSObjectProtocol?
     private var refreshScheduled = false
     private var configuring = false
@@ -35,8 +35,8 @@ final class NEManager: NSObject, ObservableObject {
 
     // MARK: - 开关
 
-    func enable(socksPort: UInt16) {
-        self.socksPort = socksPort
+    func enable(config: [String: Any]) {
+        self.pendingConfig = config
         statusText = "正在安装扩展…"
         let req = OSSystemExtensionRequest.activationRequest(
             forExtensionWithIdentifier: Self.extensionID, queue: .main)
@@ -126,6 +126,10 @@ final class NEManager: NSObject, ObservableObject {
 
     private func configureAndStart() {
         if configuring { return }
+        guard !pendingConfig.isEmpty else {
+            statusText = "缺少隧道配置"
+            return
+        }
         configuring = true
         NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, error in
             guard let self = self else { return }
@@ -140,10 +144,7 @@ final class NEManager: NSObject, ObservableObject {
             let proto = NETunnelProviderProtocol()
             proto.providerBundleIdentifier = Self.extensionID
             proto.serverAddress = "127.0.0.1"
-            proto.providerConfiguration = [
-                "routes": ["172.30.0.0/16", "10.240.0.0/16"],
-                "mtu": 1400,
-            ]
+            proto.providerConfiguration = self.pendingConfig
             mgr.protocolConfiguration = proto
             mgr.localizedDescription = "SDP 全局接管"
             mgr.isEnabled = true

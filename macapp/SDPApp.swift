@@ -124,8 +124,7 @@ final class AppModel: ObservableObject {
                 syncFromEngine()
             }
             if ProcessInfo.processInfo.environment["SDP_NE_INSTALL"] == "1" {
-                let (_, port) = SDPConfig.splitHostPort(engine.cfg.listen)
-                ne.enable(socksPort: port)
+                ne.enable(config: buildNEConfig())
             }
             if ProcessInfo.processInfo.environment["SDP_NE_AUTO"] == "1" {
                 toggleNE()
@@ -210,9 +209,54 @@ final class AppModel: ObservableObject {
         if ne.active {
             ne.disable()
         } else {
-            let (_, port) = SDPConfig.splitHostPort(engine.cfg.listen)
-            ne.enable(socksPort: port)
+            ne.enable(config: buildNEConfig())
         }
+    }
+
+    /// 构建 Packet Tunnel 配置：token/网关/策略/路由
+    func buildNEConfig() -> [String: Any] {
+        let snapshot = engine.store.snapshot()
+        var rules: [[String: String]] = []
+        var routes = Set<String>()
+        for r in snapshot {
+            rules.append(["pattern": r.pattern, "resid": r.resid, "ports": r.ports])
+            let p = r.pattern.lowercased()
+            if p.contains("/") {
+                routes.insert(p)
+            } else if PublicDNS.isIPv4(p) {
+                routes.insert(p + "/32")
+            } else if p.contains("-") && p.filter({ $0 == "." }).count == 6 {
+                let segs = p.split(separator: "-", maxSplits: 1)
+                if segs.count == 2 {
+                    for c in RuleText.ipRangeToCIDRs(String(segs[0]), String(segs[1])) {
+                        routes.insert(c)
+                    }
+                }
+            }
+        }
+        // 公网入口段也捕获（域名由 SNI 还原）
+        routes.insert("122.191.10.0/24")
+
+        var excludes = Set<String>(["127.0.0.1/32"])
+        for gw in engine.cfg.gateway.split(separator: ",") {
+            let host = String(gw).split(separator: ":").first.map(String.init) ?? ""
+            if PublicDNS.isIPv4(host) { excludes.insert(host + "/32") }
+            else if let ip = PublicDNS.resolveIPv4(host) { excludes.insert(ip + "/32") }
+        }
+        if let base = URL(string: engine.cfg.serverBase), let h = base.host, let ip = PublicDNS.resolveIPv4(h) {
+            excludes.insert(ip + "/32")
+        }
+
+        return [
+            "token": engine.token ?? "",
+            "serverName": engine.cfg.serverName,
+            "gateways": engine.cfg.gateway.split(separator: ",").map(String.init),
+            "rules": rules,
+            "directDomains": engine.cfg.directDomains ?? [],
+            "routes": Array(routes),
+            "excludeRoutes": Array(excludes),
+            "mtu": 1400,
+        ]
     }
 
     func quit() {
