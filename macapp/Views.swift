@@ -332,7 +332,7 @@ struct MenuBarContent: View {
                     .controlSize(.small)
                 }
             }
-            if showResources {
+            ExpandableSection(expanded: showResources, height: 150) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 3) {
                         ForEach(model.resources.prefix(80)) { r in
@@ -349,10 +349,6 @@ struct MenuBarContent: View {
                     .frame(maxHeight: .infinity, alignment: .top)
                 }
                 .frame(height: 150)
-                .frame(height: showResources ? 150 : 0)
-                .clipped()
-                .opacity(showResources ? 1 : 0)
-                .animation(.snappy(duration: 0.24), value: showResources)
             }
         }
     }
@@ -471,15 +467,13 @@ struct MenuBarContent: View {
     }
 
     private var logsContainer: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Divider()
-            logsView
-                .frame(height: 160)
+        ExpandableSection(expanded: model.showLogs, height: 178) {
+            VStack(alignment: .leading, spacing: 6) {
+                Divider()
+                logsView
+                    .frame(height: 160)
+            }
         }
-        .frame(height: model.showLogs ? 178 : 0, alignment: .top)
-        .clipped()
-        .opacity(model.showLogs ? 1 : 0)
-        .animation(.snappy(duration: 0.24), value: model.showLogs)
     }
 
     private var logsView: some View {
@@ -534,6 +528,23 @@ struct PanelStatusIcon: View {
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(.primary)
         }
+    }
+}
+
+/// 统一的展开/收起容器：内容高度固定，外层高度 0↔height 动画
+struct ExpandableSection<Content: View>: View {
+    let expanded: Bool
+    let height: CGFloat
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        content
+            .frame(height: height, alignment: .top)
+            .clipped()
+            .frame(height: expanded ? height : 0, alignment: .top)
+            .clipped()
+            .opacity(expanded ? 1 : 0)
+            .animation(.snappy(duration: 0.24), value: expanded)
     }
 }
 
