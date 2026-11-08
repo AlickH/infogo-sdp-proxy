@@ -71,6 +71,15 @@ struct MenuBarContent: View {
                         model.relogin()
                     }
                 }
+                if model.tab == .wireguard {
+                    iconButton("square.and.arrow.down", help: "导入 .conf 配置文件", visible: true) {
+                        importWGPanel()
+                    }
+                    iconButton("plus", help: "新建配置", visible: true) {
+                        model.newWGConfigDraft()
+                        showWGSheet = true
+                    }
+                }
                 iconButton("doc.text", help: "日志", visible: true) {
                     model.showLogs.toggle()
                     if model.showLogs { model.syncFromEngine() }
@@ -168,8 +177,6 @@ struct MenuBarContent: View {
         VStack(alignment: .leading, spacing: 8) {
             infoRow("账号", model.username.isEmpty ? "-" : model.username)
             infoRow("会话", model.sessionOK ? "正常" : "异常")
-            infoRow("SOCKS", "127.0.0.1:11095")
-            infoRow("规则", "http://\(model.uiAddress())/surge.list")
             if !model.resources.isEmpty {
                 Text("可用资源").font(.system(size: 11)).foregroundColor(.secondary)
                 ScrollView {
@@ -264,8 +271,11 @@ struct MenuBarContent: View {
 
     private var sdpTab: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
+            content
+            Divider()
+            HStack(spacing: 6) {
                 Text("全局接管").font(.system(size: 11))
+                Text(model.neStatus).font(.system(size: 10)).foregroundColor(.secondary)
                 Spacer()
                 Toggle("", isOn: Binding(
                     get: { model.neActive },
@@ -276,17 +286,6 @@ struct MenuBarContent: View {
                 .controlSize(.small)
                 .disabled(model.state != "connected")
             }
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(model.neActive ? Color.green : Color.secondary.opacity(0.5))
-                    .frame(width: 6, height: 6)
-                Text(model.neStatus).font(.system(size: 10)).foregroundColor(.secondary)
-                Text(model.neActive ? "所有内网流量经 SDP 隧道" : "通过 SOCKS 代理访问内网")
-                    .font(.system(size: 10)).foregroundColor(.secondary)
-                Spacer()
-            }
-            Divider()
-            content
         }
     }
 
@@ -296,27 +295,8 @@ struct MenuBarContent: View {
 
     private var wireGuardTab: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("配置").font(.system(size: 11, weight: .medium))
-                Spacer()
-                Button { importWGPanel() } label: {
-                    Image(systemName: "square.and.arrow.down")
-                }
-                .buttonStyle(.borderless)
-                .help("导入 .conf 配置文件")
-
-                Button {
-                    model.newWGConfigDraft()
-                    showWGSheet = true
-                } label: {
-                    Image(systemName: "plus")
-                }
-                .buttonStyle(.borderless)
-                .help("新建配置")
-            }
-
             if model.wgConfigs.isEmpty {
-                Text("暂无配置，点击 + 新建或导入 .conf")
+                Text("暂无配置，点右上角 + 新建或导入 .conf")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                     .padding(.vertical, 6)
@@ -331,22 +311,23 @@ struct MenuBarContent: View {
                 .frame(maxHeight: 150)
             }
 
+            if !model.wgError.isEmpty {
+                Text(model.wgError).font(.system(size: 10)).foregroundColor(.red).lineLimit(2)
+            }
+
+            Divider()
+
             HStack(spacing: 6) {
-                Toggle("连接", isOn: Binding(
+                Text("连接").font(.system(size: 11))
+                Spacer()
+                Toggle("", isOn: Binding(
                     get: { model.wgActive },
                     set: { _ in model.toggleWG() }
                 ))
+                .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
                 .disabled(model.wgConfigs.isEmpty)
-                Spacer()
-                Text(model.wgStatus)
-                    .font(.system(size: 10))
-                    .foregroundColor(model.wgActive ? .green : .secondary)
-            }
-
-            if !model.wgError.isEmpty {
-                Text(model.wgError).font(.system(size: 10)).foregroundColor(.red).lineLimit(2)
             }
         }
         .sheet(isPresented: $showWGSheet) {
