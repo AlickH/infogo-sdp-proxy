@@ -261,13 +261,7 @@ final class Provider: NEPacketTunnelProvider {
             let back = Task { await Self.pipe(up, client, "t->c", log) }
             if !peek.isEmpty { try await up.send(peek) }
             // 客户端 → 上游（继续读取，直到 EOF）
-            do {
-                while let chunk = try await client.receive() {
-                    try await up.send(chunk)
-                }
-            } catch {
-                log("c->t error \(error)")
-            }
+            await Self.pipe(client, up, "c->t", log)
             _ = await back.value
             try? await Task.sleep(nanoseconds: 300_000_000)
             conn.cancel()
@@ -355,6 +349,7 @@ final class Provider: NEPacketTunnelProvider {
         } catch {
             log("\(label) error \(error)")
         }
+        await to.closeWrite()
     }
 
     // MARK: - TLS SNI

@@ -8,6 +8,7 @@ protocol ByteStream: AnyObject {
 }
 
 extension ByteStream {
+    func closeWrite() async {}
     func receive() async throws -> Data? { try await receive(max: 65536) }
 }
 
@@ -21,6 +22,13 @@ final class SocketStream: ByteStream {
             conn.send(content: data, completion: .contentProcessed { err in
                 if let err = err { cont.resume(throwing: err) } else { cont.resume() }
             })
+        }
+    }
+
+    func closeWrite() async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            conn.send(content: nil, contentContext: .defaultMessage, isComplete: true,
+                      completion: .contentProcessed { _ in cont.resume() })
         }
     }
 
