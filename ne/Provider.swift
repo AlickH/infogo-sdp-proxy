@@ -239,11 +239,12 @@ final class Provider: NEPacketTunnelProvider {
             log("peek \(peek.count) bytes, dialing")
 
             let resid = store.resid(host: target, port: port)
+            let liveToken = SharedToken.read() ?? token
             var upstream: ByteStream?
-            if !resid.isEmpty, !token.isEmpty, let gw = gateways.first {
+            if !resid.isEmpty, !liveToken.isEmpty, let gw = gateways.first {
                 do {
                     upstream = try await Gateway.dial(gateway: gw, serverName: serverName,
-                                                      token: token, host: target,
+                                                      token: liveToken, host: target,
                                                       port: port, resid: resid)
                     log("tunnel ok \(target):\(port) resid=\(resid)")
                 } catch {

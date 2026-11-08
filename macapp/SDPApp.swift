@@ -155,6 +155,7 @@ final class AppModel: ObservableObject {
     }
 
     private var lastSyncedState = ""
+    private var lastToken = ""
 
     func syncFromEngine() {
         let previous = lastSyncedState
@@ -164,8 +165,14 @@ final class AppModel: ObservableObject {
         if sessionOK != engine.sessionOK { sessionOK = engine.sessionOK }
         if qrURL != engine.qrURL { qrURL = engine.qrURL }
         if loginError != engine.loginError { loginError = engine.loginError }
+        let liveToken = engine.token ?? ""
+        if liveToken != lastToken {
+            lastToken = liveToken
+            SharedToken.write(engine.token)
+        }
         // 登录成功后自动接管（首次或重新登录）
-        if engine.state == "connected", previous != "connected", !ne.active {
+        if engine.state == "connected", previous != "connected" {
+            // 始终请求激活：NE 已连接时也会把系统扩展升级到 App 内嵌的新版本
             ne.enable(config: buildNEConfig())
         }
 
