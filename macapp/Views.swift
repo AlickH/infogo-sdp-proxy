@@ -40,27 +40,36 @@ struct MenuBarContent: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: 8) {
-            PanelStatusIcon(state: model.state)
-                .padding(.top, 2)
+            if model.tab == .sdp {
+                PanelStatusIcon(state: model.state)
+                    .padding(.top, 2)
+            } else {
+                Image(systemName: model.wgActive ? "checkmark.shield.fill" : "shield.slash.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .padding(.top, 2)
+            }
             VStack(alignment: .leading, spacing: 4) {
-                Text("SDP 代理").font(.system(size: 15, weight: .semibold))
-                Text(badgeText)
+                Text(model.tab == .sdp ? "SDP 代理" : "WireGuard")
+                    .font(.system(size: 15, weight: .semibold))
+                Text(headerBadgeText)
                     .font(.system(size: 10.5, weight: .medium))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
-                    .background(badgeColor.opacity(0.16))
-                    .foregroundColor(badgeColor)
+                    .background(headerBadgeColor.opacity(0.16))
+                    .foregroundColor(headerBadgeColor)
                     .clipShape(Capsule())
             }
             Spacer()
             HStack(spacing: 6) {
-                iconButton("arrow.clockwise", help: "刷新二维码",
-                           visible: model.state == "scanning" || model.state == "login_required") {
-                    model.refreshQR()
-                }
-                iconButton("arrow.triangle.2.circlepath", help: "重新登录",
-                           visible: model.state == "connected" || model.state == "offline") {
-                    model.relogin()
+                if model.tab == .sdp {
+                    iconButton("arrow.clockwise", help: "刷新二维码",
+                               visible: model.state == "scanning" || model.state == "login_required") {
+                        model.refreshQR()
+                    }
+                    iconButton("arrow.triangle.2.circlepath", help: "重新登录",
+                               visible: model.state == "connected" || model.state == "offline") {
+                        model.relogin()
+                    }
                 }
                 iconButton("doc.text", help: "日志", visible: true) {
                     model.showLogs.toggle()
@@ -71,6 +80,22 @@ struct MenuBarContent: View {
                 }
             }
         }
+    }
+
+    private var headerBadgeText: String {
+        if model.tab == .wireguard {
+            if model.wgActive { return "已连接" }
+            if model.wgConfigs.isEmpty { return "无配置" }
+            return "未连接"
+        }
+        return badgeText
+    }
+
+    private var headerBadgeColor: Color {
+        if model.tab == .wireguard {
+            return model.wgActive ? .green : .secondary
+        }
+        return badgeColor
     }
 
     @ViewBuilder
@@ -249,7 +274,7 @@ struct MenuBarContent: View {
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .controlSize(.small)
-                .disabled(!model.sessionOK && model.state != "connected")
+                .disabled(model.state != "connected")
             }
             HStack(spacing: 4) {
                 Circle()

@@ -192,7 +192,10 @@ final class AppModel: ObservableObject {
             lastNEConfigKey = configKey
             ne.enable(config: buildNEConfig())
         }
-        if engine.state != "connected" { lastNEConfigKey = "" }
+        if engine.state != "connected" {
+            lastNEConfigKey = ""
+            if ne.active { ne.disable() }   // 未登录时隧道开关必须关闭
+        }
 
         let snapshot = engine.store.snapshot()
         if snapshot.count != resources.count {
