@@ -234,7 +234,9 @@ final class AppModel: ObservableObject {
                 }
             }
         }
-        // 公网入口段也捕获（域名由 SNI 还原）
+        // 内部网段 + 公网入口段统一捕获，域名由 SNI 还原
+        routes.insert("172.30.0.0/16")
+        routes.insert("10.240.0.0/16")
         routes.insert("122.191.10.0/24")
 
         var excludes = Set<String>(["127.0.0.1/32"])

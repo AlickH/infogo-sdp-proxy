@@ -290,6 +290,9 @@ final class Provider: NEPacketTunnelProvider {
         let proto = p[9]
         let totalLen = min(p.count, Int(p[2]) << 8 | Int(p[3]))
         if (proto == 6 || proto == 17), totalLen >= ihl + 8 {
+            let off = proto == 6 ? 16 : 6
+            // 先清零校验和字段（lwIP 可能填 0xFFFF 作为 offload 哨兵），再计算
+            p[ihl + off] = 0; p[ihl + off + 1] = 0
             var pseudo = [UInt8]()
             pseudo.append(contentsOf: p[12..<16])
             pseudo.append(contentsOf: p[16..<20])
@@ -297,16 +300,11 @@ final class Provider: NEPacketTunnelProvider {
             let segLen = UInt16(totalLen - ihl)
             pseudo.append(UInt8(segLen >> 8)); pseudo.append(UInt8(segLen & 0xFF))
             pseudo.append(contentsOf: p[ihl..<totalLen])
-            let off = proto == 6 ? 16 : 6
-            p[ihl + off] = 0; p[ihl + off + 1] = 0
-            let compute = { cs(pseudo[...]) }
-            _ = compute
             var c = cs(pseudo[...])
-            // TCP/UDP 校验和为 0 时按 RFC 规定发送 0xFFFF
             if c == 0 { c = 0xFFFF }
             p[ihl + off] = UInt8(c >> 8); p[ihl + off + 1] = UInt8(c & 0xFF)
             if totalLen <= 60 {
-                let line = "csum proto=\(proto) len=\(totalLen) computed=\(String(format: "%04x", c)) wrote=\(String(format: "%02x%02x", p[ihl+off], p[ihl+off+1]))\n"
+                let line = "csum proto=\(proto) len=\(totalLen) computed=\(String(format: "%04x", c))\n"
                 if let h = FileHandle(forWritingAtPath: "/tmp/csum.log") {
                     h.seekToEndOfFile(); h.write(Data(line.utf8)); h.closeFile()
                 } else { try? Data(line.utf8).write(to: URL(fileURLWithPath: "/tmp/csum.log")) }
