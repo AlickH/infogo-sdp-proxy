@@ -136,6 +136,10 @@ final class Provider: NEPacketTunnelProvider {
                     var type = af.bigEndian
                     withUnsafeBytes(of: &type) { out.append(contentsOf: $0) }
                     out.append(pkt)
+                    if self.inLogCount < 40, let info = Self.tcpInfo(pkt) {
+                        self.inLogCount += 1
+                        self.log("in \(info)")
+                    }
                     let sent = out.withUnsafeBytes { buf in
                         send(self.bridgeFD, buf.baseAddress, buf.count, 0)
                     }
@@ -157,10 +161,9 @@ final class Provider: NEPacketTunnelProvider {
             let type = buf.withUnsafeBytes { $0.load(as: UInt32.self) }
             let af = UInt32(bigEndian: type)
             let pkt = Self.fixChecksums(Data(buf[4..<n]))
-            if self.injectLogCount < 5 {
+            if self.injectLogCount < 40, let info = Self.tcpInfo(pkt) {
                 self.injectLogCount += 1
-                let hex = pkt.prefix(40).map { String(format: "%02x", $0) }.joined()
-                self.log("inject \(n-4) bytes af=\(af) hdr=\(hex)")
+                self.log("out \(info)")
             }
             self.packetFlow.writePackets([pkt], withProtocols: [NSNumber(value: af)])
         }
@@ -170,6 +173,7 @@ final class Provider: NEPacketTunnelProvider {
 
     private var bridgeSource: DispatchSourceRead?
     private var injectLogCount = 0
+    private var inLogCount = 0
 
     // MARK: - 本地 SOCKS（hev 的出口）
 
@@ -234,6 +238,8 @@ final class Provider: NEPacketTunnelProvider {
             let target = sni ?? host
             log("socks \(host):\(port) sni=\(sni ?? "-")")
 
+            log("peek \(peek.count) bytes, dialing")
+
             let resid = store.resid(host: target, port: port)
             var upstream: ByteStream?
             if !resid.isEmpty, !token.isEmpty, let gw = gateways.first {
@@ -250,17 +256,42 @@ final class Provider: NEPacketTunnelProvider {
                 log("no route for \(target):\(port) resid=\(resid)")
                 conn.cancel(); return
             }
-            log("peek \(peek.count) bytes, sending to tunnel")
+
+            // 上游 → 客户端
+            let back = Task { await Self.pipe(up, client, "t->c", log) }
             if !peek.isEmpty { try await up.send(peek) }
-            log("relay start")
-            async let a: Void = Self.pipe(client, up, "c->t", log)
-            async let b: Void = Self.pipe(up, client, "t->c", log)
-            _ = await (a, b)
+            // 客户端 → 上游（继续读取，直到 EOF）
+            do {
+                while let chunk = try await client.receive() {
+                    try await up.send(chunk)
+                }
+            } catch {
+                log("c->t error \(error)")
+            }
+            _ = await back.value
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            conn.cancel()
             log("relay end")
         } catch {
             log("socks error \(error)")
             conn.cancel()
         }
+    }
+
+    static func tcpInfo(_ d: Data) -> String? {
+        let p = [UInt8](d)
+        guard p.count >= 40, (p[0] >> 4) == 4, p[9] == 6 else { return nil }
+        let ihl = Int(p[0] & 0x0F) * 4
+        guard p.count >= ihl + 20 else { return nil }
+        let t = ihl
+        let sport = Int(p[t]) << 8 | Int(p[t+1])
+        let dport = Int(p[t+2]) << 8 | Int(p[t+3])
+        let seq = UInt32(p[t+4]) << 24 | UInt32(p[t+5]) << 16 | UInt32(p[t+6]) << 8 | UInt32(p[t+7])
+        let ack = UInt32(p[t+8]) << 24 | UInt32(p[t+9]) << 16 | UInt32(p[t+10]) << 8 | UInt32(p[t+11])
+        let flags = p[t+13]
+        let total = Int(p[2]) << 8 | Int(p[3])
+        let payload = max(0, total - ihl - Int(p[t+12] >> 4) * 4)
+        return String(format: "sp=%d dp=%d flags=%02x seq=%u ack=%u plen=%d", sport, dport, Int(flags), seq, ack, payload)
     }
 
     /// 注入前修正 IPv4/TCP/UDP 校验和，避免 lwIP offload 导致内核丢包

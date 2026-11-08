@@ -27,7 +27,12 @@ final class SocketStream: ByteStream {
     func receive(max: Int = 65536) async throws -> Data? {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Data?, Error>) in
             conn.receive(minimumIncompleteLength: 1, maximumLength: max) { data, _, isComplete, err in
-                if let err = err { cont.resume(throwing: err); return }
+                if let err = err {
+                    // ENOMSG(96)：对端写端已关闭，按 EOF 处理
+                    if (err as NSError).code == 96 { cont.resume(returning: nil) }
+                    else { cont.resume(throwing: err) }
+                    return
+                }
                 if let data = data, !data.isEmpty { cont.resume(returning: data); return }
                 cont.resume(returning: nil)
             }
@@ -82,6 +87,8 @@ func relay(_ a: ByteStream, _ b: ByteStream) async {
         group.addTask { await pipe(b, a) }
         await group.waitForAll()
     }
+    // 给对端一点时间把已发送的数据排空，避免 cancel 丢弃尾部数据
+    try? await Task.sleep(nanoseconds: 400_000_000)
     a.cancel(); b.cancel()
 }
 
