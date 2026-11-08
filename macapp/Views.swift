@@ -47,6 +47,7 @@ struct MenuBarContent: View {
                 }
                 iconButton("doc.text", help: "日志", visible: true) {
                     model.showLogs.toggle()
+                    if model.showLogs { model.syncFromEngine() }
                 }
                 iconButton("shield.lefthalf.filled",
                            help: model.neActive ? "关闭全局接管（NE）" : "开启全局接管（NE）",

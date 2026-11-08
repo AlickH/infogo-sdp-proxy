@@ -86,7 +86,7 @@ final class AppModel: ObservableObject {
         engine.objectWillChange
             .receive(on: RunLoop.main)
             .sink { [weak self] _ in
-                DispatchQueue.main.async { self?.syncFromEngine() }
+                self?.scheduleSync()
             }
             .store(in: &cancellables)
 
@@ -123,6 +123,10 @@ final class AppModel: ObservableObject {
                 _ = await engine.beginLogin()
                 syncFromEngine()
             }
+            if ProcessInfo.processInfo.environment["SDP_NE_INSTALL"] == "1" {
+                let (_, port) = SDPConfig.splitHostPort(engine.cfg.listen)
+                ne.enable(socksPort: port)
+            }
             if ProcessInfo.processInfo.environment["SDP_NE_AUTO"] == "1" {
                 toggleNE()
             }
@@ -131,22 +135,44 @@ final class AppModel: ObservableObject {
             }
         }
 
-        ne.refreshStatus()
-        ne.autoStartIfConfigured()
+        if ProcessInfo.processInfo.environment["SDP_NE_OFF"] == "1" {
+            ne.disableAndRemoveConfig()
+        } else {
+            ne.refreshStatus()
+            ne.autoStartIfConfigured()
+        }
         wg.refresh()
     }
 
-    func syncFromEngine() {
-        state = engine.state
-        username = engine.username
-        sessionOK = engine.sessionOK
-        qrURL = engine.qrURL
-        loginError = engine.loginError
-        resources = engine.store.snapshot().map {
-            ResItem(domain: $0.pattern, resid: $0.resid, ports: $0.ports)
+    private var syncScheduled = false
+
+    private func scheduleSync() {
+        if syncScheduled { return }
+        syncScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.syncScheduled = false
+            self?.syncFromEngine()
         }
-        resourceCount = resources.count
-        logsText = engine.logs.joined(separator: "\n")
+    }
+
+    func syncFromEngine() {
+        if state != engine.state { state = engine.state }
+        if username != engine.username { username = engine.username }
+        if sessionOK != engine.sessionOK { sessionOK = engine.sessionOK }
+        if qrURL != engine.qrURL { qrURL = engine.qrURL }
+        if loginError != engine.loginError { loginError = engine.loginError }
+
+        let snapshot = engine.store.snapshot()
+        if snapshot.count != resources.count {
+            resources = snapshot.map {
+                ResItem(domain: $0.pattern, resid: $0.resid, ports: $0.ports)
+            }
+            resourceCount = resources.count
+        }
+        // 日志只在面板展开时重建，避免高频写日志触发整面板刷新
+        if showLogs {
+            logsText = engine.logs.joined(separator: "\n")
+        }
     }
 
     func relogin() {

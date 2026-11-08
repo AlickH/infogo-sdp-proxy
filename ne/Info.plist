@@ -15,20 +15,15 @@
 	<key>CFBundlePackageType</key>
 	<string>SYSX</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.2.0</string>
+	<string>0.2.4</string>
 	<key>CFBundleVersion</key>
-	<string>2</string>
-	<key>NSExtension</key>
-	<dict>
-		<key>NSExtensionPointIdentifier</key>
-		<string>com.apple.system_extension.network_extension</string>
-		<key>NSExtensionPrincipalClass</key>
-		<string>SDPNE.Provider</string>
-	</dict>
+	<string>6</string>
 	<key>NSSystemExtensionUsageDescription</key>
 	<string>SDP 需要该扩展把本机 TCP 流量转发到本地 SDP 代理</string>
 	<key>NetworkExtension</key>
 	<dict>
+		<key>NEMachServiceName</key>
+		<string>KLU8GF65GP.com.alick.sdp-proxy.ne</string>
 		<key>NEProviderClasses</key>
 		<dict>
 			<key>com.apple.networkextension.app-proxy</key>

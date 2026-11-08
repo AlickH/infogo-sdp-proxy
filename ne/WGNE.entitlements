@@ -4,11 +4,15 @@
 <dict>
 	<key>com.apple.application-identifier</key>
 	<string>KLU8GF65GP.com.alick.sdp-proxy.wg</string>
-	<key>com.apple.developer.team-identifier</key>
-	<string>KLU8GF65GP</string>
 	<key>com.apple.developer.networking.networkextension</key>
 	<array>
 		<string>packet-tunnel-provider-systemextension</string>
+	</array>
+	<key>com.apple.developer.team-identifier</key>
+	<string>KLU8GF65GP</string>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>KLU8GF65GP.com.alick.sdp-proxy</string>
 	</array>
 </dict>
 </plist>

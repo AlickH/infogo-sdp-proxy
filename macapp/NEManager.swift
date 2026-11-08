@@ -7,33 +7,25 @@ import Combine
 final class NEManager: NSObject, ObservableObject {
     static let extensionID = "com.alick.sdp-proxy.ne"
 
-    @Published var statusText = "未启用" {
-        didSet { NSLog("[NE] 状态: %@", statusText) }
-    }
+    @Published var statusText = "未启用"
     @Published var active = false
     @Published var lastError = ""
 
     private var manager: NETransparentProxyManager?
     private var socksPort: UInt16 = 11095
     private var observer: NSObjectProtocol?
-
-    private func dbg(_ msg: String) {
-        let line = "\(Date()) \(msg)\n"
-        let path = NSHomeDirectory() + "/.sdp-proxy/ne.log"
-        if let h = FileHandle(forWritingAtPath: path) {
-            h.seekToEndOfFile(); h.write(Data(line.utf8)); h.closeFile()
-        } else {
-            try? Data(line.utf8).write(to: URL(fileURLWithPath: path))
-        }
-    }
-    private let queue = DispatchQueue.main
+    private var refreshScheduled = false
+    private var configuring = false
 
     override init() {
         super.init()
         observer = NotificationCenter.default.addObserver(
             forName: .NEVPNStatusDidChange, object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.refreshStatus()
+        ) { [weak self] note in
+            guard let self = self else { return }
+            // 只关心本 App 的透明代理连接，忽略 Surge/Amnezia 等其他 NE 的状态变化
+            guard let conn = note.object as? NEVPNConnection, conn === self.manager?.connection else { return }
+            self.scheduleRefresh()
         }
     }
 
@@ -45,11 +37,9 @@ final class NEManager: NSObject, ObservableObject {
 
     func enable(socksPort: UInt16) {
         self.socksPort = socksPort
-        dbg("enable() socks=\(socksPort)")
-        NSLog("[NE] 请求安装扩展 %@ (socks %d)", Self.extensionID, Int(socksPort))
         statusText = "正在安装扩展…"
         let req = OSSystemExtensionRequest.activationRequest(
-            forExtensionWithIdentifier: Self.extensionID, queue: queue)
+            forExtensionWithIdentifier: Self.extensionID, queue: .main)
         req.delegate = self
         OSSystemExtensionManager.shared.submitRequest(req)
     }
@@ -60,7 +50,23 @@ final class NEManager: NSObject, ObservableObject {
         active = false
     }
 
-    // MARK: - 状态
+    /// 停止并禁用已保存的透明代理配置（用于紧急恢复网络）
+    func disableAndRemoveConfig(completion: @escaping () -> Void = {}) {
+        NETransparentProxyManager.loadAllFromPreferences { [weak self] managers, _ in
+            guard let self = self else { completion(); return }
+            let mgr = managers?.first
+            mgr?.connection.stopVPNTunnel()
+            mgr?.isEnabled = false
+            mgr?.saveToPreferences { _ in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    self.statusText = "已禁用"
+                    self.active = false
+                    completion()
+                }
+            }
+            if mgr == nil { completion() }
+        }
+    }
 
     /// 已保存过配置时，App 启动后自动恢复透明代理
     func autoStartIfConfigured() {
@@ -68,12 +74,20 @@ final class NEManager: NSObject, ObservableObject {
             guard let self = self, let mgr = managers?.first else { return }
             self.manager = mgr
             if mgr.isEnabled, mgr.connection.status == .disconnected {
-                self.dbg("autoStart: starting saved config")
-                do { try mgr.connection.startVPNTunnel() } catch {
-                    self.dbg("autoStart failed: \(error)")
-                }
+                try? mgr.connection.startVPNTunnel()
             }
             self.refreshStatus()
+        }
+    }
+
+    // MARK: - 状态
+
+    private func scheduleRefresh() {
+        if refreshScheduled { return }
+        refreshScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.refreshScheduled = false
+            self?.refreshStatus()
         }
     }
 
@@ -90,7 +104,6 @@ final class NEManager: NSObject, ObservableObject {
                 return
             }
             self.manager = mgr
-            self.dbg("refresh status=\(mgr.connection.status.rawValue) enabled=\(mgr.isEnabled)")
             switch mgr.connection.status {
             case .connected:
                 self.statusText = "全局接管中"
@@ -112,8 +125,11 @@ final class NEManager: NSObject, ObservableObject {
     }
 
     private func configureAndStart() {
+        if configuring { return }
+        configuring = true
         NETransparentProxyManager.loadAllFromPreferences { [weak self] managers, error in
             guard let self = self else { return }
+            defer { self.configuring = false }
             if let error = error {
                 self.lastError = error.localizedDescription
                 self.statusText = "配置读取失败"
@@ -132,20 +148,26 @@ final class NEManager: NSObject, ObservableObject {
             mgr.localizedDescription = "SDP 全局接管"
             mgr.isEnabled = true
             mgr.saveToPreferences { error in
-                self.dbg("saveToPreferences error=\(String(describing: error))")
                 if let error = error {
                     self.lastError = error.localizedDescription
                     self.statusText = "配置保存失败"
                     return
                 }
-                do {
-                    try mgr.connection.startVPNTunnel()
-                    self.statusText = "正在启动…"
-                } catch {
-                    self.lastError = error.localizedDescription
-                    self.statusText = "启动失败"
+                mgr.loadFromPreferences { loadError in
+                    if let loadError = loadError {
+                        self.lastError = loadError.localizedDescription
+                        self.statusText = "配置重载失败"
+                        return
+                    }
+                    do {
+                        try mgr.connection.startVPNTunnel()
+                        self.statusText = "正在启动…"
+                    } catch {
+                        self.lastError = error.localizedDescription
+                        self.statusText = "启动失败"
+                    }
+                    self.refreshStatus()
                 }
-                self.refreshStatus()
             }
         }
     }
@@ -159,7 +181,6 @@ extension NEManager: OSSystemExtensionRequestDelegate {
     }
 
     func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
-        NSLog("[NE] 需要用户在系统设置中批准")
         statusText = "等待系统批准扩展…"
     }
 
@@ -167,19 +188,17 @@ extension NEManager: OSSystemExtensionRequestDelegate {
                  didFinishWithResult result: OSSystemExtensionRequest.Result) {
         switch result {
         case .completed:
-            dbg("activation completed")
             statusText = "扩展已安装"
             configureAndStart()
         case .willCompleteAfterReboot:
             statusText = "需要重启后生效"
         @unknown default:
-            statusText = "扩展安装完成（未知结果）"
+            statusText = "扩展安装完成"
             configureAndStart()
         }
     }
 
     func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
-        NSLog("[NE] 安装失败: %@", error.localizedDescription)
         lastError = error.localizedDescription
         statusText = "扩展安装失败"
     }

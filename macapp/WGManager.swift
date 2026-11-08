@@ -25,13 +25,19 @@ final class WGManager: NSObject, ObservableObject {
 
     private var manager: NETunnelProviderManager?
     private var observer: NSObjectProtocol?
+    private var refreshScheduled = false
 
     override init() {
         super.init()
         loadConfig()
         observer = NotificationCenter.default.addObserver(
             forName: .NEVPNStatusDidChange, object: nil, queue: .main
-        ) { [weak self] _ in self?.refresh() }
+        ) { [weak self] note in
+            guard let self = self,
+                  let conn = note.object as? NEVPNConnection,
+                  conn === self.manager?.connection else { return }
+            self.scheduleRefresh()
+        }
     }
 
     deinit {
@@ -68,6 +74,15 @@ final class WGManager: NSObject, ObservableObject {
         manager?.connection.stopVPNTunnel()
         active = false
         statusText = "已关闭"
+    }
+
+    private func scheduleRefresh() {
+        if refreshScheduled { return }
+        refreshScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.refreshScheduled = false
+            self?.refresh()
+        }
     }
 
     func refresh() {
