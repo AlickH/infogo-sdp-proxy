@@ -20,6 +20,7 @@ struct MenuBarContent: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 10)
             logsPane
+            footerSwitch
         }
         .padding(14)
         .frame(width: 380)
@@ -314,24 +315,6 @@ struct MenuBarContent: View {
     private var sdpTab: some View {
         VStack(alignment: .leading, spacing: 0) {
             content
-            if model.state == "connected" {
-                Divider().padding(.top, 10)
-                HStack(spacing: 6) {
-                    Text("全局接管").font(.system(size: 11))
-                    Text(model.neActive ? "所有内网流量经 SDP 隧道" : "通过 SOCKS5 代理访问内网")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Toggle("", isOn: Binding(
-                        get: { model.neActive },
-                        set: { _ in model.toggleNE() }
-                    ))
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                }
-                .padding(.top, 10)
-            }
             resourcePane
         }
     }
@@ -340,6 +323,7 @@ struct MenuBarContent: View {
 
     @State private var showWGSheet = false
     @State private var showResources = false
+    @State private var showLogsPane = false
 
     private var wireGuardTab: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -363,20 +347,6 @@ struct MenuBarContent: View {
                 Text(model.wgError).font(.system(size: 10)).foregroundColor(.red).lineLimit(2)
             }
 
-            Divider()
-
-            HStack(spacing: 6) {
-                Text("连接").font(.system(size: 11))
-                Spacer()
-                Toggle("", isOn: Binding(
-                    get: { model.wgActive },
-                    set: { _ in model.toggleWG() }
-                ))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .disabled(model.wgConfigs.isEmpty)
-            }
         }
         .sheet(isPresented: $showWGSheet) {
             WGEditSheet(
@@ -443,6 +413,47 @@ struct MenuBarContent: View {
         }
     }
 
+    // MARK: - 底部开关（固定面板底部）
+
+    @ViewBuilder
+    private var footerSwitch: some View {
+        if model.tab == .sdp {
+            if model.state == "connected" {
+                Divider().padding(.top, 10)
+                HStack(spacing: 6) {
+                    Text("全局接管").font(.system(size: 11))
+                    Text(model.neActive ? "所有内网流量经 SDP 隧道" : "通过 SOCKS5 代理访问内网")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { model.neActive },
+                        set: { _ in model.toggleNE() }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                }
+                .padding(.top, 10)
+            }
+        } else {
+            Divider().padding(.top, 10)
+            HStack(spacing: 6) {
+                Text("连接").font(.system(size: 11))
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { model.wgActive },
+                    set: { _ in model.toggleWG() }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+                .disabled(model.wgConfigs.isEmpty)
+            }
+            .padding(.top, 10)
+        }
+    }
+
     // MARK: - 底部窗格
 
     private var logText: String {
@@ -451,9 +462,9 @@ struct MenuBarContent: View {
 
     private var logsPane: some View {
         ExpandablePane(
-            expanded: model.showLogs,
+            expanded: showLogsPane,
             title: model.tab == .wireguard ? "WireGuard 日志" : "运行日志",
-            onClose: { withAnimation(.snappy(duration: 0.24)) { model.showLogs = false } }
+            onClose: { showLogsPane = false; model.showLogs = false }
         ) {
             Text(logText.isEmpty ? "（暂无日志）" : logText)
                 .font(.system(size: 10, design: .monospaced))
