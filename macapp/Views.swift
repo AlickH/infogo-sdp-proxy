@@ -7,14 +7,19 @@ struct MenuBarContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            header
-            Picker("", selection: $model.tab) {
-                ForEach(PanelTab.allCases, id: \.self) { t in
-                    Text(t.rawValue).tag(t)
+            HStack {
+                Spacer()
+                Picker("", selection: $model.tab) {
+                    ForEach(PanelTab.allCases, id: \.self) { t in
+                        Text(t.rawValue).tag(t)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 220)
+                Spacer()
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            header
             Divider()
             Group {
                 if model.tab == .sdp {
@@ -262,61 +267,53 @@ struct MenuBarContent: View {
 
     // MARK: - WireGuard 标签页
 
+    @State private var showWGSheet = false
+
     private var wireGuardTab: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 6) {
-                Menu {
-                    if model.wgConfigs.isEmpty {
-                        Text("暂无配置")
-                    } else {
-                        ForEach(model.wgConfigs) { c in
-                            Button(c.displayName) { model.selectWG(c.id) }
-                        }
-                    }
-                } label: {
-                    Text(model.wgConfigs.first(where: { $0.id == model.wgActiveID })?.displayName ?? "暂无配置")
-                        .font(.system(size: 11))
-                        .lineLimit(1)
-                }
-                .menuStyle(.borderlessButton)
-                .frame(maxWidth: 200, alignment: .leading)
-
+            HStack {
+                Text("配置").font(.system(size: 11, weight: .medium))
                 Spacer()
-
-                Button {
-                    importWGPanel()
-                } label: {
+                Button { importWGPanel() } label: {
                     Image(systemName: "square.and.arrow.down")
                 }
                 .buttonStyle(.borderless)
                 .help("导入 .conf 配置文件")
 
                 Button {
-                    model.deleteActiveWG()
-                } label: {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(.borderless)
-                .help("删除当前配置")
-                .disabled(model.wgConfigs.isEmpty)
-
-                Button {
-                    model.wgDraft = WGConfig()
+                    model.newWGConfigDraft()
+                    showWGSheet = true
                 } label: {
                     Image(systemName: "plus")
                 }
                 .buttonStyle(.borderless)
                 .help("新建配置")
-                .disabled(model.wgActiveID != nil && !model.wgDraft.valid)
             }
 
-            HStack {
+            if model.wgConfigs.isEmpty {
+                Text("暂无配置，点击 + 新建或导入 .conf")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 6)
+            } else {
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(model.wgConfigs) { c in
+                            wgConfigRow(c)
+                        }
+                    }
+                }
+                .frame(maxHeight: 150)
+            }
+
+            HStack(spacing: 6) {
                 Toggle("连接", isOn: Binding(
                     get: { model.wgActive },
                     set: { _ in model.toggleWG() }
                 ))
                 .toggleStyle(.switch)
                 .controlSize(.small)
+                .disabled(model.wgConfigs.isEmpty)
                 Spacer()
                 Text(model.wgStatus)
                     .font(.system(size: 10))
@@ -326,26 +323,58 @@ struct MenuBarContent: View {
             if !model.wgError.isEmpty {
                 Text(model.wgError).font(.system(size: 10)).foregroundColor(.red).lineLimit(2)
             }
+        }
+        .sheet(isPresented: $showWGSheet) {
+            WGEditSheet(
+                draft: $model.wgDraft,
+                onSave: {
+                    model.saveWGDraft()
+                    showWGSheet = false
+                },
+                onCancel: { showWGSheet = false }
+            )
+        }
+    }
 
-            Divider()
-
-            wgField("名称", $model.wgDraft.name, placeholder: "可选，默认用 Endpoint")
-            wgField("私钥", $model.wgDraft.privateKey)
-            wgField("地址", $model.wgDraft.address, placeholder: "10.0.0.2/32")
-            wgField("DNS", $model.wgDraft.dns, placeholder: "1.1.1.1")
-            wgField("对端公钥", $model.wgDraft.peerPublicKey)
-            wgField("Endpoint", $model.wgDraft.endpoint, placeholder: "host:51820")
-            wgField("AllowedIPs", $model.wgDraft.allowedIPs, placeholder: "0.0.0.0/0")
-            wgField("Keepalive", $model.wgDraft.keepalive, placeholder: "25")
-            wgField("MTU", $model.wgDraft.mtu, placeholder: "1420")
-
-            HStack {
-                Spacer()
-                Button("保存配置") { model.saveWGDraft() }
-                    .buttonStyle(.borderless)
+    private func wgConfigRow(_ c: WGConfig) -> some View {
+        let selected = c.id == model.wgActiveID
+        return HStack(spacing: 6) {
+            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 10))
+                .foregroundColor(selected ? .accentColor : .secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(c.displayName).font(.system(size: 11))
+                if !c.endpoint.isEmpty {
+                    Text(c.endpoint).font(.system(size: 9, design: .monospaced))
+                        .foregroundColor(.secondary)
+                }
+            }
+            Spacer()
+            Button {
+                model.editWGDraft(c.id)
+                showWGSheet = true
+            } label: {
+                Image(systemName: "pencil")
                     .font(.system(size: 10))
             }
+            .buttonStyle(.borderless)
+            .help("编辑配置")
+            Button {
+                model.selectWG(c.id)
+                model.deleteActiveWG()
+            } label: {
+                Image(systemName: "trash")
+                    .font(.system(size: 10))
+            }
+            .buttonStyle(.borderless)
+            .help("删除配置")
         }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(selected ? Color.accentColor.opacity(0.10) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .contentShape(Rectangle())
+        .onTapGesture { model.selectWG(c.id) }
     }
 
     private func importWGPanel() {
@@ -357,16 +386,6 @@ struct MenuBarContent: View {
               let text = try? String(contentsOf: url, encoding: .utf8) else { return }
         if !model.importWG(text: text, name: url.deletingPathExtension().lastPathComponent) {
             model.wgError = "配置文件解析失败（缺少 PrivateKey / PublicKey / Endpoint）"
-        }
-    }
-
-    private func wgField(_ label: String, _ value: Binding<String>, placeholder: String = "") -> some View {
-        HStack(spacing: 6) {
-            Text(label).font(.system(size: 10)).foregroundColor(.secondary)
-                .frame(width: 62, alignment: .leading)
-            TextField(placeholder, text: value)
-                .textFieldStyle(.roundedBorder)
-                .font(.system(size: 10, design: .monospaced))
         }
     }
 
@@ -427,3 +446,46 @@ struct PanelStatusIcon: View {
         }
     }
 }
+
+// MARK: - WireGuard 配置编辑 Sheet
+
+struct WGEditSheet: View {
+    @Binding var draft: WGConfig
+    var onSave: () -> Void
+    var onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("WireGuard 配置").font(.system(size: 13, weight: .semibold))
+            field("显示名称", $draft.name, placeholder: "列表里展示的名字")
+            field("私钥", $draft.privateKey)
+            field("地址", $draft.address, placeholder: "10.0.0.2/32")
+            field("DNS", $draft.dns, placeholder: "1.1.1.1")
+            field("对端公钥", $draft.peerPublicKey)
+            field("Endpoint", $draft.endpoint, placeholder: "host:51820")
+            field("AllowedIPs", $draft.allowedIPs, placeholder: "0.0.0.0/0")
+            field("Keepalive", $draft.keepalive, placeholder: "25")
+            field("MTU", $draft.mtu, placeholder: "1420")
+            HStack {
+                Spacer()
+                Button("取消") { onCancel() }
+                Button("保存") { onSave() }
+                    .keyboardShortcut(.defaultAction)
+            }
+            .padding(.top, 4)
+        }
+        .padding(16)
+        .frame(width: 440)
+    }
+
+    private func field(_ label: String, _ value: Binding<String>, placeholder: String = "") -> some View {
+        HStack(spacing: 6) {
+            Text(label).font(.system(size: 10)).foregroundColor(.secondary)
+                .frame(width: 70, alignment: .leading)
+            TextField(placeholder, text: value)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 10, design: .monospaced))
+        }
+    }
+}
+

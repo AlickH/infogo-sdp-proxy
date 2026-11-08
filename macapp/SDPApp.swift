@@ -234,6 +234,14 @@ final class AppModel: ObservableObject {
         wg.upsert(wgDraft)
     }
 
+    func newWGConfigDraft() {
+        wgDraft = WGConfig()
+    }
+
+    func editWGDraft(_ id: UUID) {
+        if let c = wgConfigs.first(where: { $0.id == id }) { wgDraft = c }
+    }
+
     func selectWG(_ id: UUID) {
         wg.select(id)
         if let c = wg.activeConfig { wgDraft = c }
