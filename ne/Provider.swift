@@ -46,7 +46,7 @@ final class Provider: NEPacketTunnelProvider {
         log("startTunnel token=\(token.isEmpty ? "nil" : "ok") gateways=\(gateways) rules=\(rules.count)")
 
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
-        settings.mtu = NSNumber(value: 1400)
+        settings.mtu = NSNumber(value: 1500)
         let ipv4 = NEIPv4Settings(addresses: ["198.19.0.1"], subnetMasks: ["255.255.255.0"])
         let routeCIDRs = (cfg["routes"] as? [String]) ?? []
         ipv4.includedRoutes = routeCIDRs.compactMap { Self.route($0) }
@@ -101,7 +101,7 @@ final class Provider: NEPacketTunnelProvider {
         let yaml = """
         tunnel:
           name: utun0
-          mtu: 1400
+          mtu: 1500
           ipv4: 198.19.0.1
           ipv6: 'fc00::1'
           icmp: 'off'
@@ -157,6 +157,11 @@ final class Provider: NEPacketTunnelProvider {
             let type = buf.withUnsafeBytes { $0.load(as: UInt32.self) }
             let af = UInt32(bigEndian: type)
             let pkt = Data(buf[4..<n])
+            if self.injectLogCount < 5 {
+                self.injectLogCount += 1
+                let hex = pkt.prefix(40).map { String(format: "%02x", $0) }.joined()
+                self.log("inject \(n-4) bytes af=\(af) hdr=\(hex)")
+            }
             self.packetFlow.writePackets([pkt], withProtocols: [NSNumber(value: af)])
         }
         source.resume()
@@ -164,6 +169,7 @@ final class Provider: NEPacketTunnelProvider {
     }
 
     private var bridgeSource: DispatchSourceRead?
+    private var injectLogCount = 0
 
     // MARK: - 本地 SOCKS（hev 的出口）
 
