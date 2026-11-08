@@ -42,12 +42,12 @@ struct MenuBarContent: View {
     private var header: some View {
         HStack(alignment: .center, spacing: 8) {
             headerIcon
-            VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
                 Text(model.tab == .sdp ? "SDP 代理" : "WireGuard")
                     .font(.system(size: 15, weight: .semibold))
                 Text(headerBadgeText)
-                    .font(.system(size: 10.5, weight: .medium))
-                    .padding(.horizontal, 8)
+                    .font(.system(size: 10, weight: .medium))
+                    .padding(.horizontal, 7)
                     .padding(.vertical, 2)
                     .background(headerBadgeColor.opacity(0.16))
                     .foregroundColor(headerBadgeColor)
@@ -106,8 +106,9 @@ struct MenuBarContent: View {
                         .background {
                             if model.tab == t {
                                 Capsule()
-                                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.95))
-                                    .shadow(color: .black.opacity(0.12), radius: 1.5, y: 0.5)
+                                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.55))
+                                    .overlay(Capsule().stroke(Color.white.opacity(0.25), lineWidth: 0.5))
+                                    .shadow(color: .black.opacity(0.10), radius: 1.5, y: 0.5)
                             }
                         }
                 }
@@ -115,7 +116,14 @@ struct MenuBarContent: View {
             }
         }
         .padding(3)
-        .background(Capsule().fill(Color.primary.opacity(0.07)))
+        .background {
+            if #available(macOS 26.0, *) {
+                Capsule().fill(.clear)
+            } else {
+                Capsule().fill(Color.primary.opacity(0.07))
+            }
+        }
+        .modifier(GlassTabBackground())
         .frame(maxWidth: .infinity)
     }
 
@@ -543,6 +551,17 @@ struct PanelStatusIcon: View {
             Image(systemName: symbol)
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(.primary)
+        }
+    }
+}
+
+struct GlassTabBackground: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.glassEffect(.regular, in: .capsule)
+        } else {
+            content
         }
     }
 }
