@@ -6,9 +6,9 @@ struct MenuBarContent: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            tabBar
-            header
+        VStack(alignment: .leading, spacing: 0) {
+            tabBar.padding(.bottom, 10)
+            header.padding(.bottom, 10)
             Divider()
             Group {
                 if model.tab == .sdp {
@@ -18,13 +18,12 @@ struct MenuBarContent: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            logsContainer
+            .padding(.top, 10)
+            logsPane
         }
         .padding(14)
         .frame(width: 380)
         .fixedSize(horizontal: false, vertical: true)
-        .animation(.snappy(duration: 0.24), value: model.showLogs)
-        .animation(.snappy(duration: 0.24), value: showResources)
     }
 
     // MARK: - 头部
@@ -313,10 +312,10 @@ struct MenuBarContent: View {
     // MARK: - SDP 标签页
 
     private var sdpTab: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 0) {
             content
             if model.state == "connected" {
-                Divider()
+                Divider().padding(.top, 10)
                 HStack(spacing: 6) {
                     Text("全局接管").font(.system(size: 11))
                     Text(model.neActive ? "所有内网流量经 SDP 隧道" : "通过 SOCKS5 代理访问内网")
@@ -331,25 +330,9 @@ struct MenuBarContent: View {
                     .toggleStyle(.switch)
                     .controlSize(.small)
                 }
+                .padding(.top, 10)
             }
-            ExpandableSection(expanded: showResources, height: 150) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 3) {
-                        ForEach(model.resources.prefix(80)) { r in
-                            HStack(spacing: 6) {
-                                Text(r.domain).font(.system(size: 10.5, design: .monospaced))
-                                Text("→ \(r.resid)").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
-                                if !r.ports.isEmpty {
-                                    Text(r.ports).font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
-                                }
-                                Spacer()
-                            }
-                        }
-                    }
-                    .frame(maxHeight: .infinity, alignment: .top)
-                }
-                .frame(height: 150)
-            }
+            resourcePane
         }
     }
 
@@ -460,44 +443,40 @@ struct MenuBarContent: View {
         }
     }
 
-    // MARK: - 底部
+    // MARK: - 底部窗格
 
     private var logText: String {
         model.tab == .wireguard ? model.wgLogsText : model.logsText
     }
 
-    private var logsContainer: some View {
-        ExpandableSection(expanded: model.showLogs, height: 178) {
-            VStack(alignment: .leading, spacing: 6) {
-                Divider()
-                logsView
-                    .frame(height: 160)
-            }
+    private var logsPane: some View {
+        ExpandablePane(
+            expanded: model.showLogs,
+            title: model.tab == .wireguard ? "WireGuard 日志" : "运行日志",
+            onClose: { withAnimation(.snappy(duration: 0.24)) { model.showLogs = false } }
+        ) {
+            Text(logText.isEmpty ? "（暂无日志）" : logText)
+                .font(.system(size: 10, design: .monospaced))
+                .textSelection(.enabled)
         }
     }
 
-    private var logsView: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(model.tab == .wireguard ? "WireGuard 日志" : "运行日志").font(.system(size: 11, weight: .medium))
-                Spacer()
-                Button {
-                    withAnimation(.snappy(duration: 0.24)) { model.showLogs = false }
-                } label: {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 11))
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.secondary)
-            }
-            ScrollView {
-                Text(logText.isEmpty ? "（暂无日志）" : logText)
-                    .font(.system(size: 10, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-            }
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
+    private var resourcePane: some View {
+        ExpandablePane(
+            expanded: showResources,
+            title: "可用资源  \(model.resources.count)",
+            onClose: { withAnimation(.snappy(duration: 0.24)) { showResources = false } }
+        ) {
+            Text(resourceText)
+                .font(.system(size: 10.5, design: .monospaced))
+                .textSelection(.enabled)
         }
+    }
+
+    private var resourceText: String {
+        model.resources.map { r in
+            r.ports.isEmpty ? "\(r.domain) → \(r.resid)" : "\(r.domain) → \(r.resid)  \(r.ports)"
+        }.joined(separator: "\n")
     }
 }
 
@@ -531,20 +510,38 @@ struct PanelStatusIcon: View {
     }
 }
 
-/// 统一的展开/收起容器：内容高度固定，外层高度 0↔height 动画
-struct ExpandableSection<Content: View>: View {
-    let expanded: Bool
-    let height: CGFloat
+/// 统一的展开/收起窗格：日志与可用资源共用
+struct ExpandablePane<Content: View>: View {
+    var expanded: Bool
+    var title: String
+    var onClose: () -> Void
     @ViewBuilder var content: Content
 
+    static var height: CGFloat { 176 }
+
     var body: some View {
-        content
-            .frame(height: height, alignment: .top)
-            .clipped()
-            .frame(height: expanded ? height : 0, alignment: .top)
-            .clipped()
-            .opacity(expanded ? 1 : 0)
-            .animation(.snappy(duration: 0.24), value: expanded)
+        VStack(alignment: .leading, spacing: 6) {
+            Divider()
+            HStack(spacing: 6) {
+                Text(title).font(.system(size: 11, weight: .medium))
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark.circle.fill").font(.system(size: 11))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+            }
+            ScrollView {
+                content
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(height: Self.height, alignment: .top)
+        .clipped()
+        .frame(height: expanded ? Self.height : 0, alignment: .top)
+        .clipped()
+        .opacity(expanded ? 1 : 0)
+        .animation(.snappy(duration: 0.24), value: expanded)
     }
 }
 
