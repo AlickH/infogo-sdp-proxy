@@ -233,9 +233,14 @@ final class Provider: NEPacketTunnelProvider {
             let resid = store.resid(host: target, port: port)
             var upstream: ByteStream?
             if !resid.isEmpty, !token.isEmpty, let gw = gateways.first {
-                upstream = try? await Gateway.dial(gateway: gw, serverName: serverName,
-                                                   token: token, host: target,
-                                                   port: port, resid: resid)
+                do {
+                    upstream = try await Gateway.dial(gateway: gw, serverName: serverName,
+                                                      token: token, host: target,
+                                                      port: port, resid: resid)
+                    log("tunnel ok \(target):\(port) resid=\(resid)")
+                } catch {
+                    log("gateway fail \(target):\(port) resid=\(resid) err=\(error)")
+                }
             }
             guard let up = upstream else {
                 log("no route for \(target):\(port) resid=\(resid)")
@@ -271,9 +276,13 @@ final class Provider: NEPacketTunnelProvider {
             let len = Int(d[i+2]) << 8 | Int(d[i+3])
             i += 4
             if type == 0 && i + len <= d.count {
-                var j = i + 2
-                guard j + 3 <= i + len else { return nil }
-                let nameLen = Int(d[j]) << 8 | Int(d[j+1]); j += 3
+                var j = i
+                guard j + 2 <= i + len else { return nil }
+                let listLen = Int(d[j]) << 8 | Int(d[j+1]); j += 2
+                guard j + 3 <= i + len, j + 3 + 0 <= i + len else { return nil }
+                _ = listLen
+                j += 1 // name_type
+                let nameLen = Int(d[j]) << 8 | Int(d[j+1]); j += 2
                 guard j + nameLen <= i + len else { return nil }
                 return String(bytes: d[j..<(j+nameLen)], encoding: .utf8)
             }
