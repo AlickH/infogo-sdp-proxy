@@ -6,29 +6,35 @@ struct MenuBarContent: View {
     @ObservedObject var model: AppModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            tabBar
-            header
-            Divider()
-            Group {
-                if model.tab == .sdp {
-                    sdpTab
-                } else {
-                    wireGuardTab
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            if model.showLogs {
+        ZStack(alignment: .bottom) {
+            VStack(alignment: .leading, spacing: 10) {
+                tabBar
+                header
                 Divider()
-                logsView
+                Group {
+                    if model.tab == .sdp {
+                        sdpTab
+                    } else {
+                        wireGuardTab
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(14)
+            .frame(width: 380)
+            .fixedSize(horizontal: false, vertical: true)
+
+            if model.showLogs {
+                logDrawer
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if model.tab == .sdp && showResources {
+                resourceDrawer
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .padding(14)
         .frame(width: 380)
-        .fixedSize(horizontal: false, vertical: true)
-        .animation(.snappy(duration: 0.2), value: model.showLogs)
-        .animation(.snappy(duration: 0.2), value: showResources)
+        .animation(.snappy(duration: 0.22), value: model.showLogs)
+        .animation(.snappy(duration: 0.22), value: showResources)
     }
 
     // MARK: - 头部
@@ -50,6 +56,13 @@ struct MenuBarContent: View {
             Spacer()
             HStack(spacing: 6) {
                 if model.tab == .sdp {
+                    iconButton("list.bullet.rectangle", help: "可用资源",
+                               visible: !model.resources.isEmpty, active: showResources) {
+                        withAnimation(.snappy(duration: 0.22)) {
+                            model.showLogs = false
+                            showResources.toggle()
+                        }
+                    }
                     iconButton("arrow.clockwise", help: "刷新二维码",
                                visible: model.state == "scanning" || model.state == "login_required") {
                         model.refreshQR()
@@ -226,39 +239,6 @@ struct MenuBarContent: View {
         VStack(alignment: .leading, spacing: 8) {
             infoRow("账号", model.username.isEmpty ? "-" : model.username)
             infoRow("会话", model.sessionOK ? "正常" : "异常")
-            if !model.resources.isEmpty {
-                Button {
-                    withAnimation(.snappy(duration: 0.16)) { showResources.toggle() }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: showResources ? "chevron.down" : "chevron.right")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text("可用资源").font(.system(size: 11))
-                        Text("\(model.resources.count)").font(.system(size: 10)).foregroundColor(.secondary)
-                        Spacer()
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.secondary)
-                if showResources {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 3) {
-                            ForEach(model.resources.prefix(60)) { r in
-                                HStack(spacing: 6) {
-                                    Text(r.domain).font(.system(size: 10.5, design: .monospaced))
-                                    Text("→ \(r.resid)").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
-                                    if !r.ports.isEmpty {
-                                        Text(r.ports).font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 130)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                }
-            }
         }
     }
 
@@ -470,29 +450,70 @@ struct MenuBarContent: View {
         model.tab == .wireguard ? model.wgLogsText : model.logsText
     }
 
-    private var logsView: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Text(model.tab == .wireguard ? "WireGuard 日志" : "运行日志").font(.system(size: 11, weight: .medium))
+    private var drawerTitle: String {
+        model.tab == .wireguard ? "WireGuard 日志" : "运行日志"
+    }
+
+    private var logDrawer: some View {
+        drawer(title: drawerTitle,
+               subtitle: nil,
+               content: AnyView(
+                   Text(logText.isEmpty ? "（暂无日志）" : logText)
+                       .font(.system(size: 10, design: .monospaced))
+                       .frame(maxWidth: .infinity, alignment: .leading)
+                       .textSelection(.enabled)
+               ))
+    }
+
+    private var resourceDrawer: some View {
+        drawer(title: "可用资源",
+               subtitle: "\(model.resources.count)",
+               content: AnyView(
+                   VStack(alignment: .leading, spacing: 3) {
+                       ForEach(model.resources.prefix(80)) { r in
+                           HStack(spacing: 6) {
+                               Text(r.domain).font(.system(size: 10.5, design: .monospaced))
+                               Text("→ \(r.resid)").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
+                               if !r.ports.isEmpty {
+                                   Text(r.ports).font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
+                               }
+                               Spacer()
+                           }
+                       }
+                   }
+               ))
+    }
+
+    private func drawer(title: String, subtitle: String?, content: AnyView) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Text(title).font(.system(size: 11, weight: .medium))
+                if let subtitle = subtitle {
+                    Text(subtitle).font(.system(size: 10)).foregroundColor(.secondary)
+                }
                 Spacer()
                 Button {
-                    model.showLogs = false
+                    withAnimation(.snappy(duration: 0.22)) {
+                        model.showLogs = false
+                        showResources = false
+                    }
                 } label: {
-                    Image(systemName: "xmark.circle.fill").font(.system(size: 11))
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
                 }
                 .buttonStyle(.plain)
                 .foregroundColor(.secondary)
             }
             ScrollView {
-                Text(logText.isEmpty ? "（暂无日志）" : logText)
-                    .font(.system(size: 10, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
+                content
             }
-            .frame(height: 160)
-            .background(Color(nsColor: .textBackgroundColor).opacity(0.5))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
         }
+        .padding(10)
+        .frame(width: 380, height: 220)
+        .background(.regularMaterial)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.primary.opacity(0.08), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.18), radius: 8, y: -2)
     }
 }
 
