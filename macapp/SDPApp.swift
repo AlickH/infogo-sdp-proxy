@@ -257,10 +257,10 @@ final class AppModel: ObservableObject {
         }
         // 内部网段 + 公网入口段统一捕获，域名由 SNI 还原
         routes.insert("172.30.0.0/16")
-        routes.insert("10.0.0.0/8")
+        routes.insert("10.240.0.0/12")   // 内网 10.24x-10.25x，避免与 WireGuard 的 10.0.0.0/24 冲突
         routes.insert("122.191.10.0/24")
 
-        var excludes = Set<String>(["127.0.0.1/32", "10.0.0.0/24"])
+        var excludes = Set<String>(["127.0.0.1/32"])
         for gw in engine.cfg.gateway.split(separator: ",") {
             let host = String(gw).split(separator: ":").first.map(String.init) ?? ""
             if PublicDNS.isIPv4(host) { excludes.insert(host + "/32") }
