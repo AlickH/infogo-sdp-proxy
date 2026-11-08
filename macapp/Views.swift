@@ -48,9 +48,11 @@ struct MenuBarContent: View {
                 if model.tab == .sdp {
                     iconButton("list.bullet.rectangle", help: "可用资源",
                                visible: !model.resources.isEmpty, active: showResources) {
-                        showLogsPane = false
-                        model.showLogs = false
-                        showResources.toggle()
+                        withAnimation(.snappy(duration: 0.24)) {
+                            showLogsPane = false
+                            model.showLogs = false
+                            showResources.toggle()
+                        }
                     }
                     iconButton("arrow.clockwise", help: "刷新二维码",
                                visible: model.state == "scanning" || model.state == "login_required") {
@@ -71,9 +73,11 @@ struct MenuBarContent: View {
                     }
                 }
                 iconButton("doc.text", help: "日志", visible: true, active: showLogsPane) {
-                    showResources = false
-                    showLogsPane.toggle()
-                    model.showLogs = showLogsPane
+                    withAnimation(.snappy(duration: 0.24)) {
+                        showResources = false
+                        showLogsPane.toggle()
+                        model.showLogs = showLogsPane
+                    }
                     if showLogsPane {
                         // 动画结束后再刷新内容，避免刷新打断高度动画
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
@@ -470,7 +474,12 @@ struct MenuBarContent: View {
         ExpandablePane(
             expanded: showLogsPane,
             title: model.tab == .wireguard ? "WireGuard 日志" : "运行日志",
-            onClose: { showLogsPane = false; model.showLogs = false }
+            onClose: {
+                withAnimation(.snappy(duration: 0.24)) {
+                    showLogsPane = false
+                    model.showLogs = false
+                }
+            }
         ) {
             Text(logText.isEmpty ? "（暂无日志）" : logText)
                 .font(.system(size: 10, design: .monospaced))
@@ -482,7 +491,9 @@ struct MenuBarContent: View {
         ExpandablePane(
             expanded: showResources,
             title: "可用资源  \(model.resources.count)",
-            onClose: { withAnimation(.snappy(duration: 0.24)) { showResources = false } }
+            onClose: {
+                withAnimation(.snappy(duration: 0.24)) { showResources = false }
+            }
         ) {
             Text(resourceText)
                 .font(.system(size: 10.5, design: .monospaced))
@@ -558,7 +569,6 @@ struct ExpandablePane<Content: View>: View {
         .frame(height: expanded ? Self.height : 0, alignment: .top)
         .clipped()
         .opacity(expanded ? 1 : 0)
-        .animation(.snappy(duration: 0.24), value: expanded)
     }
 }
 
