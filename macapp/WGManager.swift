@@ -57,6 +57,7 @@ final class WGManager: NSObject, ObservableObject {
     @Published var error = ""
     @Published var configs: [WGConfig] = []
     @Published var activeID: UUID?
+    @Published var logs: [String] = []
 
     private var manager: NETunnelProviderManager?
     private var observer: NSObjectProtocol?
@@ -77,6 +78,13 @@ final class WGManager: NSObject, ObservableObject {
 
     deinit {
         if let o = observer { NotificationCenter.default.removeObserver(o) }
+    }
+
+    private func log(_ msg: String) {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm:ss"
+        logs.append("\(f.string(from: Date())) \(msg)")
+        if logs.count > 300 { logs.removeFirst(logs.count - 300) }
     }
 
     var activeConfig: WGConfig? {
@@ -110,11 +118,13 @@ final class WGManager: NSObject, ObservableObject {
     }
 
     func select(_ id: UUID) {
+        log("选择配置: \(configs.first(where: { $0.id == id })?.displayName ?? "-")")
         activeID = id
         persist()
     }
 
     func upsert(_ cfg: WGConfig) {
+        log("保存配置: \(cfg.displayName) mtu=\(cfg.mtu)")
         var c = cfg
         if c.name.isEmpty { c.name = c.endpoint }
         if let idx = configs.firstIndex(where: { $0.id == c.id }) {
@@ -172,6 +182,7 @@ final class WGManager: NSObject, ObservableObject {
     // MARK: - 连接
 
     func enable() {
+        log("请求安装/激活扩展")
         NSLog("[WG] 请求安装扩展 %@", Self.extensionID)
         statusText = "正在安装扩展…"
         let req = OSSystemExtensionRequest.activationRequest(
@@ -181,6 +192,7 @@ final class WGManager: NSObject, ObservableObject {
     }
 
     func disable() {
+        log("断开连接")
         manager?.connection.stopVPNTunnel()
         active = false
         statusText = "已关闭"
@@ -209,6 +221,7 @@ final class WGManager: NSObject, ObservableObject {
             self.manager = mgr
             switch mgr.connection.status {
             case .connected:
+                if !self.active { self.log("隧道已连接") }
                 self.statusText = "已连接"
                 self.active = true
             case .connecting, .reasserting:
@@ -218,6 +231,7 @@ final class WGManager: NSObject, ObservableObject {
                 self.statusText = "正在断开…"
                 self.active = false
             default:
+                if self.active { self.log("隧道已断开") }
                 self.statusText = "已关闭"
                 self.active = false
             }
@@ -226,9 +240,11 @@ final class WGManager: NSObject, ObservableObject {
 
     private func configureAndStart() {
         guard let cfg = activeConfig, cfg.valid else {
+            log("配置无效：需要 PrivateKey / PublicKey / Endpoint")
             statusText = "扩展已安装，请填写或导入配置"
             return
         }
+        log("启动配置: \(cfg.displayName) endpoint=\(cfg.endpoint) mtu=\(cfg.mtu)")
         NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, err in
             guard let self = self else { return }
             if let err = err { self.error = err.localizedDescription; return }
@@ -306,11 +322,13 @@ extension WGManager: OSSystemExtensionRequestDelegate {
 
     func request(_ request: OSSystemExtensionRequest,
                  didFinishWithResult result: OSSystemExtensionRequest.Result) {
+        log("扩展已就绪")
         statusText = "扩展已安装"
         configureAndStart()
     }
 
     func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
+        log("扩展安装失败: \(error.localizedDescription)")
         NSLog("[WG] 安装失败: %@", error.localizedDescription)
         self.error = error.localizedDescription
         statusText = "扩展安装失败"

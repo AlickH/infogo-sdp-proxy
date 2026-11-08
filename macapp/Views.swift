@@ -7,18 +7,7 @@ struct MenuBarContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Spacer()
-                Picker("", selection: $model.tab) {
-                    ForEach(PanelTab.allCases, id: \.self) { t in
-                        Text(t.rawValue).tag(t)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 220)
-                Spacer()
-            }
+            tabBar
             header
             Divider()
             Group {
@@ -29,11 +18,13 @@ struct MenuBarContent: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Divider()
-            if model.showLogs { logsView }
+            if model.showLogs {
+                Divider()
+                logsView
+            }
         }
         .padding(14)
-        .frame(width: 380)
+        .frame(width: 380, height: 560)
     }
 
     // MARK: - 头部
@@ -87,6 +78,45 @@ struct MenuBarContent: View {
                 iconButton("power", help: "退出", visible: true) {
                     model.quit()
                 }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var tabBar: some View {
+        if #available(macOS 26.0, *) {
+            HStack(spacing: 4) {
+                Spacer()
+                ForEach(PanelTab.allCases, id: \.self) { t in
+                    Button {
+                        withAnimation(.snappy(duration: 0.18)) { model.tab = t }
+                    } label: {
+                        Text(t.rawValue)
+                            .font(.system(size: 11, weight: .semibold))
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 6)
+                    }
+                    .buttonStyle(.plain)
+                    .glassEffect(
+                        model.tab == t ? .regular.tint(.accentColor).interactive()
+                                       : .regular.interactive(),
+                        in: .capsule
+                    )
+                }
+                Spacer()
+            }
+        } else {
+            HStack {
+                Spacer()
+                Picker("", selection: $model.tab) {
+                    ForEach(PanelTab.allCases, id: \.self) { t in
+                        Text(t.rawValue).tag(t)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 220)
+                Spacer()
             }
         }
     }
@@ -272,19 +302,22 @@ struct MenuBarContent: View {
     private var sdpTab: some View {
         VStack(alignment: .leading, spacing: 8) {
             content
-            Divider()
-            HStack(spacing: 6) {
-                Text("全局接管").font(.system(size: 11))
-                Text(model.neStatus).font(.system(size: 10)).foregroundColor(.secondary)
-                Spacer()
-                Toggle("", isOn: Binding(
-                    get: { model.neActive },
-                    set: { _ in model.toggleNE() }
-                ))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .controlSize(.small)
-                .disabled(model.state != "connected")
+            if model.state == "connected" {
+                Divider()
+                HStack(spacing: 6) {
+                    Text("全局接管").font(.system(size: 11))
+                    Text(model.neActive ? "所有内网流量经 SDP 隧道" : "通过 SOCKS5 代理访问内网")
+                        .font(.system(size: 10))
+                        .foregroundColor(.secondary)
+                    Spacer()
+                    Toggle("", isOn: Binding(
+                        get: { model.neActive },
+                        set: { _ in model.toggleNE() }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+                }
             }
         }
     }
@@ -397,10 +430,14 @@ struct MenuBarContent: View {
 
     // MARK: - 底部
 
+    private var logText: String {
+        model.tab == .wireguard ? model.wgLogsText : model.logsText
+    }
+
     private var logsView: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Text("运行日志").font(.system(size: 11, weight: .medium))
+                Text(model.tab == .wireguard ? "WireGuard 日志" : "运行日志").font(.system(size: 11, weight: .medium))
                 Spacer()
                 Button {
                     model.showLogs = false
@@ -411,7 +448,7 @@ struct MenuBarContent: View {
                 .foregroundColor(.secondary)
             }
             ScrollView {
-                Text(model.logsText.isEmpty ? "（暂无日志）" : model.logsText)
+                Text(logText.isEmpty ? "（暂无日志）" : logText)
                     .font(.system(size: 10, design: .monospaced))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)

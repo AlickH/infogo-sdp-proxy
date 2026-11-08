@@ -79,6 +79,7 @@ final class AppModel: ObservableObject {
     @Published var wgConfigs: [WGConfig] = []
     @Published var wgActiveID: UUID?
     @Published var wgDraft = WGConfig()
+    @Published var wgLogsText = ""
     @Published var tab: PanelTab = .sdp
     private let server: ProxyServer
     private var cancellables = Set<AnyCancellable>()
@@ -122,6 +123,7 @@ final class AppModel: ObservableObject {
                     self.wgError = self.wg.error
                     self.wgConfigs = self.wg.configs
                     self.wgActiveID = self.wg.activeID
+                    self.wgLogsText = self.wg.logs.joined(separator: "\n")
                 }
             }
             .store(in: &cancellables)
@@ -153,6 +155,10 @@ final class AppModel: ObservableObject {
         }
         wg.refresh()
         wgDraft = wg.activeConfig ?? WGConfig()
+    }
+
+    func syncWGLogs() {
+        wgLogsText = wg.logs.joined(separator: "\n")
     }
 
     private var syncScheduled = false
