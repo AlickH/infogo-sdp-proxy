@@ -429,7 +429,7 @@ struct MenuBarContent: View {
     private var footerSwitch: some View {
         if model.tab == .sdp {
             if model.state == "connected" {
-                Divider().padding(.top, 16)
+                Divider().padding(.top, 10)
                 HStack(spacing: 6) {
                     Text("全局接管").font(.system(size: 11))
                     Text(model.neActive ? "所有内网流量经 SDP 隧道" : "通过 SOCKS5 代理访问内网")
@@ -447,7 +447,7 @@ struct MenuBarContent: View {
                 .padding(.top, 10)
             }
         } else {
-            Divider().padding(.top, 16)
+            Divider().padding(.top, 10)
             HStack(spacing: 6) {
                 Text("连接").font(.system(size: 11))
                 Spacer()
@@ -569,6 +569,7 @@ struct ExpandablePane<Content: View>: View {
         .frame(height: expanded ? Self.height : 0, alignment: .top)
         .clipped()
         .opacity(expanded ? 1 : 0)
+        .padding(.top, expanded ? 12 : 0)
     }
 }
 
