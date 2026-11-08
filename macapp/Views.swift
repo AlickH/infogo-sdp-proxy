@@ -346,10 +346,13 @@ struct MenuBarContent: View {
                             }
                         }
                     }
+                    .frame(maxHeight: .infinity, alignment: .top)
                 }
+                .frame(height: 150)
                 .frame(height: showResources ? 150 : 0)
                 .clipped()
                 .opacity(showResources ? 1 : 0)
+                .animation(.snappy(duration: 0.24), value: showResources)
             }
         }
     }
@@ -471,6 +474,7 @@ struct MenuBarContent: View {
         VStack(alignment: .leading, spacing: 6) {
             Divider()
             logsView
+                .frame(height: 160)
         }
         .frame(height: model.showLogs ? 178 : 0, alignment: .top)
         .clipped()
@@ -556,6 +560,16 @@ struct WGEditSheet: View {
             Text("WireGuard 配置").font(.system(size: 13, weight: .semibold))
             field("显示名称", $draft.name, placeholder: "列表里展示的名字")
             field("私钥", $draft.privateKey)
+            HStack(spacing: 6) {
+                Text("公钥").font(.system(size: 10)).foregroundColor(.secondary)
+                    .frame(width: 70, alignment: .leading)
+                Text(draft.publicKey ?? "（私钥无效）")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(draft.publicKey == nil ? .secondary : .primary)
+                    .textSelection(.enabled)
+                    .lineLimit(1)
+                Spacer()
+            }
             field("地址", $draft.address, placeholder: "10.0.0.2/32")
             field("DNS", $draft.dns, placeholder: "1.1.1.1")
             field("对端公钥", $draft.peerPublicKey)
@@ -563,6 +577,9 @@ struct WGEditSheet: View {
             field("AllowedIPs", $draft.allowedIPs, placeholder: "0.0.0.0/0")
             field("Keepalive", $draft.keepalive, placeholder: "25")
             field("MTU", $draft.mtu, placeholder: "1420")
+            Toggle("按需连接（On-Demand，Ethernet / Wi-Fi 自动连接）", isOn: $draft.onDemand)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 10))
             HStack {
                 Spacer()
                 Button("取消") { onCancel() }

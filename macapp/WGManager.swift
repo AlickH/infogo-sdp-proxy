@@ -1,5 +1,6 @@
 import Foundation
 import NetworkExtension
+import CryptoKit
 import SystemExtensions
 import Combine
 
@@ -14,6 +15,7 @@ struct WGConfig: Codable, Equatable, Identifiable {
     var allowedIPs = "0.0.0.0/0"
     var keepalive = "25"
     var mtu = "1420"
+    var onDemand = false
 
     init() {}
 
@@ -29,6 +31,17 @@ struct WGConfig: Codable, Equatable, Identifiable {
         allowedIPs = try c.decodeIfPresent(String.self, forKey: .allowedIPs) ?? "0.0.0.0/0"
         keepalive = try c.decodeIfPresent(String.self, forKey: .keepalive) ?? "25"
         mtu = try c.decodeIfPresent(String.self, forKey: .mtu) ?? "1420"
+        onDemand = try c.decodeIfPresent(Bool.self, forKey: .onDemand) ?? false
+    }
+
+    var publicKey: String? {
+        WGConfig.derivePublicKey(privateKey)
+    }
+
+    static func derivePublicKey(_ base64: String) -> String? {
+        guard let data = Data(base64Encoded: base64), data.count == 32,
+              let key = try? Curve25519.KeyAgreement.PrivateKey(rawRepresentation: data) else { return nil }
+        return key.publicKey.rawRepresentation.base64EncodedString()
     }
 
     var displayName: String {
@@ -379,6 +392,15 @@ final class WGManager: NSObject, ObservableObject {
             mgr.protocolConfiguration = proto
             mgr.localizedDescription = "SDP WireGuard"
             mgr.isEnabled = true
+            if cfg.onDemand {
+                let rule = NEOnDemandRuleConnect()
+                rule.interfaceTypeMatch = .any
+                mgr.onDemandRules = [rule]
+                mgr.isOnDemandEnabled = true
+            } else {
+                mgr.onDemandRules = []
+                mgr.isOnDemandEnabled = false
+            }
             mgr.saveToPreferences { error in
                 if let error = error {
                     self.error = error.localizedDescription
