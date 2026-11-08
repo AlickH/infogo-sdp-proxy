@@ -156,7 +156,7 @@ final class Provider: NEPacketTunnelProvider {
             guard n > 4 else { return }
             let type = buf.withUnsafeBytes { $0.load(as: UInt32.self) }
             let af = UInt32(bigEndian: type)
-            let pkt = Data(buf[4..<n])
+            let pkt = Self.fixChecksums(Data(buf[4..<n]))
             if self.injectLogCount < 5 {
                 self.injectLogCount += 1
                 let hex = pkt.prefix(40).map { String(format: "%02x", $0) }.joined()
@@ -261,6 +261,58 @@ final class Provider: NEPacketTunnelProvider {
             log("socks error \(error)")
             conn.cancel()
         }
+    }
+
+    /// 注入前修正 IPv4/TCP/UDP 校验和，避免 lwIP offload 导致内核丢包
+    static func fixChecksums(_ data: Data) -> Data {
+        var p = [UInt8](data)
+        guard p.count >= 20, (p[0] >> 4) == 4 else { return data }
+        let ihl = Int(p[0] & 0x0F) * 4
+        guard p.count >= ihl else { return data }
+
+        func cs(_ bytes: ArraySlice<UInt8>) -> UInt16 {
+            var sum: UInt32 = 0
+            var i = bytes.startIndex
+            while i + 1 < bytes.endIndex {
+                sum += UInt32(bytes[i]) << 8 | UInt32(bytes[i+1])
+                i += 2
+            }
+            if i < bytes.endIndex { sum += UInt32(bytes[i]) << 8 }
+            while sum >> 16 != 0 { sum = (sum & 0xFFFF) + (sum >> 16) }
+            return UInt16(~sum & 0xFFFF)
+        }
+
+        // IPv4 header
+        p[10] = 0; p[11] = 0
+        let ipc = cs(p[0..<ihl])
+        p[10] = UInt8(ipc >> 8); p[11] = UInt8(ipc & 0xFF)
+
+        let proto = p[9]
+        let totalLen = min(p.count, Int(p[2]) << 8 | Int(p[3]))
+        if (proto == 6 || proto == 17), totalLen >= ihl + 8 {
+            var pseudo = [UInt8]()
+            pseudo.append(contentsOf: p[12..<16])
+            pseudo.append(contentsOf: p[16..<20])
+            pseudo.append(0); pseudo.append(proto)
+            let segLen = UInt16(totalLen - ihl)
+            pseudo.append(UInt8(segLen >> 8)); pseudo.append(UInt8(segLen & 0xFF))
+            pseudo.append(contentsOf: p[ihl..<totalLen])
+            let off = proto == 6 ? 16 : 6
+            p[ihl + off] = 0; p[ihl + off + 1] = 0
+            let compute = { cs(pseudo[...]) }
+            _ = compute
+            var c = cs(pseudo[...])
+            // TCP/UDP 校验和为 0 时按 RFC 规定发送 0xFFFF
+            if c == 0 { c = 0xFFFF }
+            p[ihl + off] = UInt8(c >> 8); p[ihl + off + 1] = UInt8(c & 0xFF)
+            if totalLen <= 60 {
+                let line = "csum proto=\(proto) len=\(totalLen) computed=\(String(format: "%04x", c)) wrote=\(String(format: "%02x%02x", p[ihl+off], p[ihl+off+1]))\n"
+                if let h = FileHandle(forWritingAtPath: "/tmp/csum.log") {
+                    h.seekToEndOfFile(); h.write(Data(line.utf8)); h.closeFile()
+                } else { try? Data(line.utf8).write(to: URL(fileURLWithPath: "/tmp/csum.log")) }
+            }
+        }
+        return Data(p)
     }
 
     static func pipe(_ from: ByteStream, _ to: ByteStream, _ label: String,
