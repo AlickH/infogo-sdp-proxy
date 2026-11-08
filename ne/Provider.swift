@@ -20,6 +20,10 @@ final class Provider: NEPacketTunnelProvider {
         NSLog("[TUN] %@", s)
         let line = "\(Date()) \(s)\n"
         let path = "/tmp/sdpne.log"
+        let fm = FileManager.default
+        if let n = (try? fm.attributesOfItem(atPath: path))?[.size] as? Int, n > 2 * 1024 * 1024 {
+            try? fm.removeItem(atPath: path)
+        }
         if let h = FileHandle(forWritingAtPath: path) {
             h.seekToEndOfFile(); h.write(Data(line.utf8)); h.closeFile()
         } else {

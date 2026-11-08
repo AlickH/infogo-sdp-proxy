@@ -62,6 +62,7 @@ final class WGManager: NSObject, ObservableObject {
     private var manager: NETunnelProviderManager?
     private var observer: NSObjectProtocol?
     private var refreshScheduled = false
+    private var logFileBytes = -1
     private var pollTimer: Timer?
     private var lastRuntimeLine = ""
     private var lastHandshake: Int = 0
@@ -92,11 +93,27 @@ final class WGManager: NSObject, ObservableObject {
         logs.append(line)
         if logs.count > 300 { logs.removeFirst(logs.count - 300) }
         if let data = (line + "\n").data(using: .utf8) {
+            let fm = FileManager.default
+            if logFileBytes < 0 {
+                logFileBytes = (try? fm.attributesOfItem(atPath: Self.logPath))?[.size] as? Int ?? 0
+            }
+            let limit = 2 * 1024 * 1024
+            if logFileBytes > limit {
+                let backup = Self.logPath + ".1"
+                try? fm.removeItem(atPath: backup)
+                if logFileBytes > limit * 2 {
+                    try? fm.removeItem(atPath: Self.logPath)
+                } else {
+                    try? fm.moveItem(atPath: Self.logPath, toPath: backup)
+                }
+                logFileBytes = 0
+            }
             if let h = FileHandle(forWritingAtPath: Self.logPath) {
                 h.seekToEndOfFile(); h.write(data); h.closeFile()
             } else {
                 try? data.write(to: URL(fileURLWithPath: Self.logPath))
             }
+            logFileBytes += data.count
         }
     }
 

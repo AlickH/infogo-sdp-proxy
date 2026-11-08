@@ -58,14 +58,33 @@ final class Engine: ObservableObject {
         return (dir.isEmpty ? NSHomeDirectory() + "/.sdp-proxy" : dir) + "/app.log"
     }
 
+    private var logFileBytes = -1
+    private let logFileLimit = 5 * 1024 * 1024
+
     private func appendToFile(_ line: String) {
         let path = logPath
+        let fm = FileManager.default
+        if logFileBytes < 0 {
+            logFileBytes = (try? fm.attributesOfItem(atPath: path))?[.size] as? Int ?? 0
+        }
+        if logFileBytes > logFileLimit {
+            // 超过 5MB 滚动：保留一份 .1，过大则直接清掉
+            let backup = path + ".1"
+            try? fm.removeItem(atPath: backup)
+            if logFileBytes > logFileLimit * 2 {
+                try? fm.removeItem(atPath: path)
+            } else {
+                try? fm.moveItem(atPath: path, toPath: backup)
+            }
+            logFileBytes = 0
+        }
         let data = Data((line + "\n").utf8)
         if let h = FileHandle(forWritingAtPath: path) {
             h.seekToEndOfFile(); h.write(data); h.closeFile()
         } else {
             try? data.write(to: URL(fileURLWithPath: path))
         }
+        logFileBytes += data.count
     }
 
     static let df: DateFormatter = {
