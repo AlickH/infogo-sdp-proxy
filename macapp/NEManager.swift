@@ -160,12 +160,21 @@ final class NEManager: NSObject, ObservableObject {
                         self.statusText = "配置重载失败"
                         return
                     }
-                    do {
-                        try mgr.connection.startVPNTunnel()
-                        self.statusText = "正在启动…"
-                    } catch {
-                        self.lastError = error.localizedDescription
-                        self.statusText = "启动失败"
+                    // 配置变化后必须重启隧道，否则仍在用旧配置
+                    if mgr.connection.status == .connected || mgr.connection.status == .connecting {
+                        mgr.connection.stopVPNTunnel()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+                            do { try mgr.connection.startVPNTunnel(); self.statusText = "正在启动…" }
+                            catch { self.lastError = error.localizedDescription; self.statusText = "启动失败" }
+                        }
+                    } else {
+                        do {
+                            try mgr.connection.startVPNTunnel()
+                            self.statusText = "正在启动…"
+                        } catch {
+                            self.lastError = error.localizedDescription
+                            self.statusText = "启动失败"
+                        }
                     }
                     self.refreshStatus()
                 }

@@ -156,6 +156,7 @@ final class AppModel: ObservableObject {
 
     private var lastSyncedState = ""
     private var lastToken = ""
+    private var lastNEConfigKey = ""
 
     func syncFromEngine() {
         let previous = lastSyncedState
@@ -171,10 +172,15 @@ final class AppModel: ObservableObject {
             SharedToken.write(engine.token)
         }
         // 登录成功后自动接管（首次或重新登录）
-        if engine.state == "connected", previous != "connected" {
-            // 始终请求激活：NE 已连接时也会把系统扩展升级到 App 内嵌的新版本
+        let snapshotRules = engine.store.snapshot()
+        let configKey = "\(snapshotRules.count)|\(snapshotRules.first?.pattern ?? "")"
+        let neDisabledByEnv = ProcessInfo.processInfo.environment["SDP_NE_OFF"] == "1"
+        if engine.state == "connected", !neDisabledByEnv, snapshotRules.count > 10, configKey != lastNEConfigKey {
+            // 策略表加载完成后才下发扩展配置，避免用内置规则（错误 resid）启动
+            lastNEConfigKey = configKey
             ne.enable(config: buildNEConfig())
         }
+        if engine.state != "connected" { lastNEConfigKey = "" }
 
         let snapshot = engine.store.snapshot()
         if snapshot.count != resources.count {
@@ -262,6 +268,12 @@ final class AppModel: ObservableObject {
         }
         if let base = URL(string: engine.cfg.serverBase), let h = base.host, let ip = PublicDNS.resolveIPv4(h) {
             excludes.insert(ip + "/32")
+        }
+        // 内置直连域名（如 app.cscec5b.com.cn）是公网站点，不能收进隧道
+        let directHosts = RuleStore.builtinDirectDomains + (engine.cfg.directDomains ?? [])
+        for h in directHosts where !h.isEmpty {
+            if PublicDNS.isIPv4(h) { excludes.insert(h + "/32") }
+            else if let ip = PublicDNS.resolveIPv4(h) { excludes.insert(ip + "/32") }
         }
 
         return [
