@@ -24,7 +24,7 @@ struct MenuBarContent: View {
             }
         }
         .padding(14)
-        .frame(width: 380, height: 560)
+        .frame(width: 380)
     }
 
     // MARK: - 头部
@@ -82,43 +82,31 @@ struct MenuBarContent: View {
         }
     }
 
-    @ViewBuilder
     private var tabBar: some View {
-        if #available(macOS 26.0, *) {
-            HStack(spacing: 4) {
-                Spacer()
-                ForEach(PanelTab.allCases, id: \.self) { t in
-                    Button {
-                        withAnimation(.snappy(duration: 0.18)) { model.tab = t }
-                    } label: {
-                        Text(t.rawValue)
-                            .font(.system(size: 11, weight: .semibold))
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 6)
-                    }
-                    .buttonStyle(.plain)
-                    .glassEffect(
-                        model.tab == t ? .regular.tint(.accentColor).interactive()
-                                       : .regular.interactive(),
-                        in: .capsule
-                    )
+        HStack(spacing: 0) {
+            ForEach(PanelTab.allCases, id: \.self) { t in
+                Button {
+                    withAnimation(.snappy(duration: 0.16)) { model.tab = t }
+                } label: {
+                    Text(t.rawValue)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(model.tab == t ? .primary : .secondary)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 4)
+                        .background {
+                            if model.tab == t {
+                                Capsule()
+                                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.95))
+                                    .shadow(color: .black.opacity(0.12), radius: 1.5, y: 0.5)
+                            }
+                        }
                 }
-                Spacer()
-            }
-        } else {
-            HStack {
-                Spacer()
-                Picker("", selection: $model.tab) {
-                    ForEach(PanelTab.allCases, id: \.self) { t in
-                        Text(t.rawValue).tag(t)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 220)
-                Spacer()
+                .buttonStyle(.plain)
             }
         }
+        .padding(3)
+        .background(Capsule().fill(Color.primary.opacity(0.07)))
+        .frame(maxWidth: .infinity)
     }
 
     private var headerBadgeText: String {
@@ -208,21 +196,36 @@ struct MenuBarContent: View {
             infoRow("账号", model.username.isEmpty ? "-" : model.username)
             infoRow("会话", model.sessionOK ? "正常" : "异常")
             if !model.resources.isEmpty {
-                Text("可用资源").font(.system(size: 11)).foregroundColor(.secondary)
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 3) {
-                        ForEach(model.resources.prefix(30)) { r in
-                            HStack(spacing: 6) {
-                                Text(r.domain).font(.system(size: 10.5, design: .monospaced))
-                                Text("→ \(r.resid)").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
-                                if !r.ports.isEmpty {
-                                    Text(r.ports).font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
+                Button {
+                    withAnimation(.snappy(duration: 0.16)) { showResources.toggle() }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: showResources ? "chevron.down" : "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("可用资源").font(.system(size: 11))
+                        Text("\(model.resources.count)").font(.system(size: 10)).foregroundColor(.secondary)
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+                if showResources {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 3) {
+                            ForEach(model.resources.prefix(60)) { r in
+                                HStack(spacing: 6) {
+                                    Text(r.domain).font(.system(size: 10.5, design: .monospaced))
+                                    Text("→ \(r.resid)").font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
+                                    if !r.ports.isEmpty {
+                                        Text(r.ports).font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
+                                    }
                                 }
                             }
                         }
                     }
+                    .frame(maxHeight: 130)
                 }
-                .frame(maxHeight: 120)
             }
         }
     }
@@ -325,6 +328,7 @@ struct MenuBarContent: View {
     // MARK: - WireGuard 标签页
 
     @State private var showWGSheet = false
+    @State private var showResources = false
 
     private var wireGuardTab: some View {
         VStack(alignment: .leading, spacing: 8) {
