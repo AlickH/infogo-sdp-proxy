@@ -55,6 +55,16 @@ final class WGProvider: NEPacketTunnelProvider {
         }
     }
 
+    override func handleAppMessage(_ messageData: Data, completionHandler: ((Data?) -> Void)? = nil) {
+        guard let adapter = adapter else {
+            completionHandler?(nil)
+            return
+        }
+        adapter.getRuntimeConfiguration { config in
+            completionHandler?(config?.data(using: .utf8))
+        }
+    }
+
     override func stopTunnel(with reason: NEProviderStopReason, completionHandler: @escaping () -> Void) {
         adapter?.stop { _ in
             completionHandler()

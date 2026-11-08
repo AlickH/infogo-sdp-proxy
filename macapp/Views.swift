@@ -21,6 +21,7 @@ struct MenuBarContent: View {
             if model.showLogs {
                 Divider()
                 logsView
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
         .padding(14)
@@ -255,6 +256,7 @@ struct MenuBarContent: View {
                         }
                     }
                     .frame(maxHeight: 130)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
             }
         }

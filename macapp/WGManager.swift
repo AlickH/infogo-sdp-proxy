@@ -62,6 +62,9 @@ final class WGManager: NSObject, ObservableObject {
     private var manager: NETunnelProviderManager?
     private var observer: NSObjectProtocol?
     private var refreshScheduled = false
+    private var pollTimer: Timer?
+    private var lastRuntimeLine = ""
+    private var lastHandshake: Int = 0
 
     override init() {
         super.init()
@@ -80,11 +83,21 @@ final class WGManager: NSObject, ObservableObject {
         if let o = observer { NotificationCenter.default.removeObserver(o) }
     }
 
+    static var logPath: String { NSHomeDirectory() + "/.sdp-proxy/wireguard.log" }
+
     private func log(_ msg: String) {
         let f = DateFormatter()
         f.dateFormat = "HH:mm:ss"
-        logs.append("\(f.string(from: Date())) \(msg)")
+        let line = "\(f.string(from: Date())) \(msg)"
+        logs.append(line)
         if logs.count > 300 { logs.removeFirst(logs.count - 300) }
+        if let data = (line + "\n").data(using: .utf8) {
+            if let h = FileHandle(forWritingAtPath: Self.logPath) {
+                h.seekToEndOfFile(); h.write(data); h.closeFile()
+            } else {
+                try? data.write(to: URL(fileURLWithPath: Self.logPath))
+            }
+        }
     }
 
     var activeConfig: WGConfig? {
@@ -198,6 +211,80 @@ final class WGManager: NSObject, ObservableObject {
         statusText = "已关闭"
     }
 
+    // MARK: - 运行时状态轮询（握手/RX/TX）
+
+    private func startPolling() {
+        if pollTimer != nil { return }
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            self?.pollRuntime()
+        }
+        pollRuntime()
+    }
+
+    private func stopPolling() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+    }
+
+    private func pollRuntime() {
+        guard let session = manager?.connection as? NETunnelProviderSession else { return }
+        try? session.sendProviderMessage(Data("status".utf8)) { [weak self] data in
+            guard let self = self, let data = data,
+                  let text = String(data: data, encoding: .utf8) else { return }
+            self.handleRuntime(text)
+        }
+    }
+
+    private func handleRuntime(_ text: String) {
+        var peers = 0
+        var handshake = 0
+        var rx = 0
+        var tx = 0
+        var currentHandshake = 0
+        var currentRx = 0
+        var currentTx = 0
+        for raw in text.split(separator: "\n") {
+            let line = raw.trimmingCharacters(in: .whitespaces)
+            guard let eq = line.firstIndex(of: "=") else { continue }
+            let key = String(line[..<eq])
+            let value = String(line[line.index(after: eq)...])
+            if key == "public_key" {
+                if peers > 0 {
+                    handshake = max(handshake, currentHandshake)
+                    rx += currentRx; tx += currentTx
+                }
+                peers += 1
+                currentHandshake = 0; currentRx = 0; currentTx = 0
+            } else if key == "last_handshake_time_sec" {
+                currentHandshake = Int(value) ?? 0
+            } else if key == "rx_bytes" {
+                currentRx = Int(value) ?? 0
+            } else if key == "tx_bytes" {
+                currentTx = Int(value) ?? 0
+            }
+        }
+        if peers > 0 {
+            handshake = max(handshake, currentHandshake)
+            rx += currentRx; tx += currentTx
+        }
+        let line = "[NET] Runtime config summary: peers=\(peers) last_handshake_time_sec=\(handshake) rx_bytes=\(rx) tx_bytes=\(tx)"
+        if line != lastRuntimeLine {
+            lastRuntimeLine = line
+            log(line)
+        }
+        if handshake > 0 && handshake != lastHandshake {
+            lastHandshake = handshake
+            log("[NET] handshake 成功 time=\(handshake)")
+        }
+    }
+
+    private func intValue(_ v: Any?) -> Int {
+        if let n = v as? Int { return n }
+        if let n = v as? NSNumber { return n.intValue }
+        if let s = v as? String { return Int(s) ?? 0 }
+        return 0
+    }
+
     private func scheduleRefresh() {
         if refreshScheduled { return }
         refreshScheduled = true
@@ -221,9 +308,14 @@ final class WGManager: NSObject, ObservableObject {
             self.manager = mgr
             switch mgr.connection.status {
             case .connected:
-                if !self.active { self.log("隧道已连接") }
+                if !self.active {
+                    self.log("隧道已连接")
+                    self.lastRuntimeLine = ""
+                    self.lastHandshake = 0
+                }
                 self.statusText = "已连接"
                 self.active = true
+                self.startPolling()
             case .connecting, .reasserting:
                 self.statusText = "正在连接…"
                 self.active = true
@@ -234,6 +326,7 @@ final class WGManager: NSObject, ObservableObject {
                 if self.active { self.log("隧道已断开") }
                 self.statusText = "已关闭"
                 self.active = false
+                self.stopPolling()
             }
         }
     }
