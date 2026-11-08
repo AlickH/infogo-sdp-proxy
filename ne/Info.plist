@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>SYSX</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.5.22</string>
+	<string>0.6.0</string>
 	<key>CFBundleVersion</key>
-	<string>32</string>
+	<string>39</string>
 	<key>NSSystemExtensionUsageDescription</key>
 	<string>SDP 需要该扩展把本机 TCP 流量转发到本地 SDP 代理</string>
 	<key>NetworkExtension</key>

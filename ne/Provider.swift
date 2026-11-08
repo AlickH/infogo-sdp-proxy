@@ -97,6 +97,11 @@ final class Provider: NEPacketTunnelProvider {
         }
         hevFD = fds[0]
         bridgeFD = fds[1]
+        var sz: Int32 = 4 * 1024 * 1024
+        for fd in fds {
+            setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sz, socklen_t(MemoryLayout<Int32>.size))
+            setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &sz, socklen_t(MemoryLayout<Int32>.size))
+        }
 
         let yaml = """
         tunnel:
@@ -111,6 +116,7 @@ final class Provider: NEPacketTunnelProvider {
           udp: 'udp'
         misc:
           log-level: info
+          tcp-buffer-size: 8192
         """
         let yamlBytes = Array(yaml.utf8)
         running = true
@@ -129,19 +135,14 @@ final class Provider: NEPacketTunnelProvider {
             guard running else { return }
             packetFlow.readPackets { [weak self] packets, protocols in
                 guard let self = self, self.running else { return }
-                if !packets.isEmpty { self.log("packetFlow -> hev \(packets.count) pkt") }
                 for (i, pkt) in packets.enumerated() {
                     var out = Data()
                     let af = i < protocols.count ? UInt32(truncating: protocols[i]) : UInt32(AF_INET)
                     var type = af.bigEndian
                     withUnsafeBytes(of: &type) { out.append(contentsOf: $0) }
                     out.append(pkt)
-                    if self.inLogCount < 40, let info = Self.tcpInfo(pkt) {
-                        self.inLogCount += 1
-                        self.log("in \(info)")
-                    }
                     let sent = out.withUnsafeBytes { buf in
-                        send(self.bridgeFD, buf.baseAddress, buf.count, 0)
+                        send(self.bridgeFD, buf.baseAddress, buf.count, MSG_DONTWAIT)
                     }
                     if sent < 0 { self.log("send bridge error \(errno)") }
                 }
@@ -154,26 +155,23 @@ final class Provider: NEPacketTunnelProvider {
         let source = DispatchSource.makeReadSource(fileDescriptor: bridgeFD, queue: .global())
         source.setEventHandler { [weak self] in
             guard let self = self, self.running else { return }
-            var buf = [UInt8](repeating: 0, count: 65536)
-            let n = recv(self.bridgeFD, &buf, buf.count, 0)
-            if n > 4 { self.log("hev -> packetFlow \(n) bytes") }
-            guard n > 4 else { return }
-            let type = buf.withUnsafeBytes { $0.load(as: UInt32.self) }
-            let af = UInt32(bigEndian: type)
-            let pkt = Self.fixChecksums(Data(buf[4..<n]))
-            if self.injectLogCount < 40, let info = Self.tcpInfo(pkt) {
-                self.injectLogCount += 1
-                self.log("out \(info)")
+            // 非阻塞 drain，避免一次空事件后永久阻塞
+            while true {
+                var buf = [UInt8](repeating: 0, count: 65536)
+                let n = recv(self.bridgeFD, &buf, buf.count, MSG_DONTWAIT)
+                guard n > 4 else { break }
+                let type = buf.withUnsafeBytes { $0.load(as: UInt32.self) }
+                let af = UInt32(bigEndian: type)
+                let pkt = Self.fixChecksums(Data(buf[4..<n]))
+                self.packetFlow.writePackets([pkt], withProtocols: [NSNumber(value: af)])
             }
-            self.packetFlow.writePackets([pkt], withProtocols: [NSNumber(value: af)])
         }
         source.resume()
         self.bridgeSource = source
+
     }
 
     private var bridgeSource: DispatchSourceRead?
-    private var injectLogCount = 0
-    private var inLogCount = 0
 
     // MARK: - 本地 SOCKS（hev 的出口）
 
@@ -230,10 +228,10 @@ final class Provider: NEPacketTunnelProvider {
             if let chunk = try await client.receive() {
                 peek.append(chunk)
             }
-            var sni = Self.parseSNI(peek)
+            var sni = Self.parseSNI(peek) ?? Self.parseHTTPHost(peek)
             if sni == nil, let more = try await client.receive() {
                 peek.append(more)
-                sni = Self.parseSNI(peek)
+                sni = Self.parseSNI(peek) ?? Self.parseHTTPHost(peek)
             }
             let target = sni ?? host
             log("socks \(host):\(port) sni=\(sni ?? "-")")
@@ -270,22 +268,6 @@ final class Provider: NEPacketTunnelProvider {
             log("socks error \(error)")
             conn.cancel()
         }
-    }
-
-    static func tcpInfo(_ d: Data) -> String? {
-        let p = [UInt8](d)
-        guard p.count >= 40, (p[0] >> 4) == 4, p[9] == 6 else { return nil }
-        let ihl = Int(p[0] & 0x0F) * 4
-        guard p.count >= ihl + 20 else { return nil }
-        let t = ihl
-        let sport = Int(p[t]) << 8 | Int(p[t+1])
-        let dport = Int(p[t+2]) << 8 | Int(p[t+3])
-        let seq = UInt32(p[t+4]) << 24 | UInt32(p[t+5]) << 16 | UInt32(p[t+6]) << 8 | UInt32(p[t+7])
-        let ack = UInt32(p[t+8]) << 24 | UInt32(p[t+9]) << 16 | UInt32(p[t+10]) << 8 | UInt32(p[t+11])
-        let flags = p[t+13]
-        let total = Int(p[2]) << 8 | Int(p[3])
-        let payload = max(0, total - ihl - Int(p[t+12] >> 4) * 4)
-        return String(format: "sp=%d dp=%d flags=%02x seq=%u ack=%u plen=%d", sport, dport, Int(flags), seq, ack, payload)
     }
 
     /// 注入前修正 IPv4/TCP/UDP 校验和，避免 lwIP offload 导致内核丢包
@@ -328,12 +310,6 @@ final class Provider: NEPacketTunnelProvider {
             var c = cs(pseudo[...])
             if c == 0 { c = 0xFFFF }
             p[ihl + off] = UInt8(c >> 8); p[ihl + off + 1] = UInt8(c & 0xFF)
-            if totalLen <= 60 {
-                let line = "csum proto=\(proto) len=\(totalLen) computed=\(String(format: "%04x", c))\n"
-                if let h = FileHandle(forWritingAtPath: "/tmp/csum.log") {
-                    h.seekToEndOfFile(); h.write(Data(line.utf8)); h.closeFile()
-                } else { try? Data(line.utf8).write(to: URL(fileURLWithPath: "/tmp/csum.log")) }
-            }
         }
         return Data(p)
     }
@@ -350,6 +326,18 @@ final class Provider: NEPacketTunnelProvider {
             log("\(label) error \(error)")
         }
         await to.closeWrite()
+    }
+
+    static func parseHTTPHost(_ data: Data) -> String? {
+        guard data.count > 16 else { return nil }
+        let text = String(decoding: data.prefix(4096), as: UTF8.self)
+        for line in text.split(separator: "\r\n") {
+            let lower = line.lowercased()
+            if lower.hasPrefix("host:") {
+                return line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            }
+        }
+        return nil
     }
 
     // MARK: - TLS SNI

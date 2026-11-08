@@ -52,7 +52,7 @@ struct MenuBarContent: View {
                 // 透明代理暂时隐藏：当前实现会捕获 App 自身流量导致环路，修复后再放出
                 iconButton("shield.lefthalf.filled",
                            help: model.neActive ? "关闭全局接管（NE）" : "开启全局接管（NE）",
-                           visible: false, active: model.neActive) {
+                           visible: true, active: model.neActive) {
                     model.toggleNE()
                 }
                 iconButton("power", help: "退出", visible: true) {

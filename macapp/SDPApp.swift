@@ -154,12 +154,20 @@ final class AppModel: ObservableObject {
         }
     }
 
+    private var lastSyncedState = ""
+
     func syncFromEngine() {
+        let previous = lastSyncedState
+        lastSyncedState = engine.state
         if state != engine.state { state = engine.state }
         if username != engine.username { username = engine.username }
         if sessionOK != engine.sessionOK { sessionOK = engine.sessionOK }
         if qrURL != engine.qrURL { qrURL = engine.qrURL }
         if loginError != engine.loginError { loginError = engine.loginError }
+        // 登录成功后自动接管（首次或重新登录）
+        if engine.state == "connected", previous != "connected", !ne.active {
+            ne.enable(config: buildNEConfig())
+        }
 
         let snapshot = engine.store.snapshot()
         if snapshot.count != resources.count {
@@ -236,10 +244,10 @@ final class AppModel: ObservableObject {
         }
         // 内部网段 + 公网入口段统一捕获，域名由 SNI 还原
         routes.insert("172.30.0.0/16")
-        routes.insert("10.240.0.0/16")
+        routes.insert("10.0.0.0/8")
         routes.insert("122.191.10.0/24")
 
-        var excludes = Set<String>(["127.0.0.1/32"])
+        var excludes = Set<String>(["127.0.0.1/32", "10.0.0.0/24"])
         for gw in engine.cfg.gateway.split(separator: ",") {
             let host = String(gw).split(separator: ":").first.map(String.init) ?? ""
             if PublicDNS.isIPv4(host) { excludes.insert(host + "/32") }
