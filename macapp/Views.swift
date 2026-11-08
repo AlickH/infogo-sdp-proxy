@@ -48,10 +48,9 @@ struct MenuBarContent: View {
                 if model.tab == .sdp {
                     iconButton("list.bullet.rectangle", help: "可用资源",
                                visible: !model.resources.isEmpty, active: showResources) {
-                        withAnimation(.snappy(duration: 0.24)) {
-                            model.showLogs = false
-                            showResources.toggle()
-                        }
+                        showLogsPane = false
+                        model.showLogs = false
+                        showResources.toggle()
                     }
                     iconButton("arrow.clockwise", help: "刷新二维码",
                                visible: model.state == "scanning" || model.state == "login_required") {
@@ -71,9 +70,16 @@ struct MenuBarContent: View {
                         showWGSheet = true
                     }
                 }
-                iconButton("doc.text", help: "日志", visible: true) {
-                    model.showLogs.toggle()
-                    if model.showLogs { model.syncFromEngine(); model.syncWGLogs() }
+                iconButton("doc.text", help: "日志", visible: true, active: showLogsPane) {
+                    showResources = false
+                    showLogsPane.toggle()
+                    model.showLogs = showLogsPane
+                    if showLogsPane {
+                        // 动画结束后再刷新内容，避免刷新打断高度动画
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
+                            model.syncFromEngine(); model.syncWGLogs()
+                        }
+                    }
                 }
                 iconButton("power", help: "退出", visible: true) {
                     model.quit()
