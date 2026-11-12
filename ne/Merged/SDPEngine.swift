@@ -19,6 +19,10 @@ final class SDPEngine: TunnelEngine, @unchecked Sendable {
     private(set) var routes: [String] = []
     private(set) var excludeRoutes: [String] = []
     private(set) var addresses: [String] = ["198.19.0.1/24"]
+
+    /// SDP 在用户态终结连接（hev/lwIP 终止 TCP 后另起 NWConnection 拨网关），
+    /// 因此不需要分类器改写源地址。
+    let terminatesFlows = true
     let dnsServers: [String] = []
     let dnsMatchDomain = ""
     private(set) var mtu = 1500

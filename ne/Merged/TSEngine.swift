@@ -14,7 +14,21 @@ final class TSEngine: TunnelEngine {
     let name = "ts"
 
     private(set) var routes: [String] = []
-    private(set) var addresses: [String] = []
+    /// Tailscale 自己的 100.x 地址（tsnet 内部使用），不挂到 utun 上。
+    private(set) var localAddresses: [String] = []
+
+    /// utun 上不挂 TS 的地址（内核不需要知道 100.x，由 tsnet 内部使用）。
+    var addresses: [String] { [] }
+
+    /// tsnet 只认自己的 100.x 作为明文包源地址：单 utun 上内核只会给应用的
+    /// 连接挑 198.19.0.1，tsnet 收到后认为不是发给自己的，直接丢弃。
+    /// 所以和 WG 一样要做双向转换（见 SourceRewriter 的说明）。
+    ///
+    /// 必须实时读取：TS 的地址在登录后才会从占位 100.64.0.254 变成真实 100.x。
+    var tunnelSourceAddress: String? {
+        guard let cidr = localAddresses.first(where: { !$0.contains(":") }) else { return nil }
+        return cidr.split(separator: "/").first.map(String.init) ?? cidr
+    }
     private(set) var dnsServers: [String] = []
     private(set) var dnsMatchDomain = ""
     private(set) var mtu = 1280
@@ -40,7 +54,7 @@ final class TSEngine: TunnelEngine {
         { [weak self] _, done in
             guard let self = self else { done(nil); return }
             self.prepare(config: self.lastConfig)
-            Diag.log("ts", "地址变更 -> 重新规划 addresses=\(self.addresses.joined(separator: ",")) routes=\(self.routes.joined(separator: ","))")
+            Diag.log("ts", "地址变更 -> 本机地址 \(self.localAddresses.joined(separator: ",")) routes=\(self.routes.joined(separator: ","))")
             self.networkChange?()
             done(nil)
         }
@@ -63,7 +77,7 @@ final class TSEngine: TunnelEngine {
         let acceptDNS = config["acceptDNS"] as? Bool ?? true
 
         routes = (config["routes"] as? [String])?.filter { !$0.isEmpty } ?? ["100.64.0.0/10"]
-        addresses = ips.isEmpty ? ["100.64.0.254/32"] : ips.map { $0 + "/32" }
+        localAddresses = ips.isEmpty ? ["100.64.0.254/32"] : ips.map { $0 + "/32" }
         dnsServers = acceptDNS ? ["100.100.100.100"] : []
         dnsMatchDomain = (status["tailnet"] as? String) ?? ""
         if let control = config["controlURL"] as? String, !control.isEmpty,

@@ -70,8 +70,35 @@ protocol TunnelEngine: AnyObject {
     /// 该引擎负责的目的网段（最长前缀优先）
     var routes: [String] { get }
 
-    /// 交给内核的虚拟网卡地址（CIDR），以及 DNS 设置
+    /// 需要挂到 utun 上的**接口地址**（CIDR），以及 DNS 设置。
+    ///
+    /// 只有真正在用户态终结流量、自己发起外联的引擎（SDP 的 hev）才需要它：
+    /// hev 的配置里写死了 `ipv4: 198.19.0.1`，这个地址必须存在于网卡上。
+    ///
+    /// WG / TS **不应该**往这里放地址。它们的地址是协议内部的标识
+    /// （WG 的 10.0.0.3、TS 的 100.x），由各自的引擎在用户态使用，
+    /// 内核完全不需要知道。往 utun 上多挂一个地址只会让内核多一个源地址候选，
+    /// 反而选错——Surge 处理成百上千个节点时也只用一个隧道地址。
     var addresses: [String] { get }
+
+    /// 本引擎在协议层使用的地址（点分十进制），用于把它收到的包的源地址
+    /// 改写成本引擎自己。
+    ///
+    /// 只有**三层隧道**（WireGuard）需要：它把明文包加密后发往对端，对端按
+    /// 明文包的源 IP 决定回包发往哪里。单 utun 上内核只会选隧道自己的地址，
+    /// 对端没有这个地址，回包就全丢了。
+    ///
+    /// 终结型引擎（SDP 的 hev、TS 的 tsnet）不需要：它们在用户态重建连接，
+    /// 源地址不参与对端回包决策，写了反而会破坏其内部会话。
+    var tunnelSourceAddress: String? { get }
+
+    /// 本引擎是否**自己终结**流量（在用户态重建连接）。
+    ///
+    /// `true`（SDP：hev/lwIP 终结 TCP 后另起 NWConnection）时内核写的源地址
+    /// 无关紧要，包只用于还原目的地址；`false`（WG/TS：透传原始 IP 包）时
+    /// 源地址会被对端当成真实来源，必须由分类器改写成该引擎自己的地址，
+    /// 否则对端不认、回包全丢。
+    var terminatesFlows: Bool { get }
     /// 不进入隧道的路由（如 127.0.0.1/32）
     var excludeRoutes: [String] { get }
 
@@ -126,6 +153,9 @@ protocol TunnelEngine: AnyObject {
 extension TunnelEngine {
     var excludeRoutes: [String] { [] }
     var outboundTargets: [String] { [] }
+    /// 默认按「透传原始包」处理：需要分类器改写源地址才算正确
+    var terminatesFlows: Bool { false }
+    var tunnelSourceAddress: String? { nil }
     func setNetworkChangeHandler(_ handler: @escaping () -> Void) {}
     func logStatus(_ reason: String) {}
 }

@@ -135,7 +135,39 @@ func wgResolveEndpoints(uapi string) (string, error) {
 	return strings.Join(lines, "\n"), nil
 }
 
-// gobind 无法绑定 func 参数，日志直接写 stderr。
+// WireGuard 的日志缓冲区。
+//
+// gobind 无法绑定 func 参数，而 stderr 在 NetworkExtension 里完全不可见
+// （扩展进程的 stderr 没有任何接收方）。把日志留在内存里，由 Swift 侧
+// 定期取走写进诊断文件，否则 WireGuard 握手失败的真正原因永远看不到。
+var (
+	wgLogMu    sync.Mutex
+	wgLogLines []string
+)
+
+const wgLogLimit = 400
+
+// gobind 无法绑定 func 参数，日志写 stderr 的同时进内存缓冲。
 func wgLogf(format string, args ...any) {
-	log.Printf("[tsbridge/wg] "+format, args...)
+	line := fmt.Sprintf("[tsbridge/wg] "+format, args...)
+	log.Print(line)
+
+	wgLogMu.Lock()
+	defer wgLogMu.Unlock()
+	wgLogLines = append(wgLogLines, line)
+	if len(wgLogLines) > wgLogLimit {
+		wgLogLines = wgLogLines[len(wgLogLines)-wgLogLimit:]
+	}
+}
+
+// WgDrainLog 取出自上次调用以来累积的日志（取走即清空）。
+func WgDrainLog() string {
+	wgLogMu.Lock()
+	defer wgLogMu.Unlock()
+	if len(wgLogLines) == 0 {
+		return ""
+	}
+	out := strings.Join(wgLogLines, "\n")
+	wgLogLines = wgLogLines[:0]
+	return out
 }

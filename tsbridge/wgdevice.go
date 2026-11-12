@@ -12,6 +12,7 @@ package tsbridge
 // 这里用的是上游 golang.zx2c4.com/wireguard，wgTun.Device 的 Read 签名不同。
 
 import (
+	"sync/atomic"
 	"errors"
 	"io"
 	"os"
@@ -112,8 +113,10 @@ func (d *wgPacketDevice) Write(bufs [][]byte, offset int) (int, error) {
 		select {
 		case d.out <- pkt:
 			count++
+			wgOutCount.Add(1)
 		default:
 			// 队列满：丢弃单包，不阻塞 wireguard-go 的接收协程
+			wgOutDropped.Add(1)
 		}
 	}
 	return count, nil
@@ -152,6 +155,16 @@ func WgDeliverInboundPacket(pkt []byte) error {
 		return errors.New("sdbridge: inbound queue full")
 	}
 }
+
+// 解密产出计数：Write 由 wireguard-go 收到并解密成功才会被调用，
+// 用它区分「对端没回包」和「回了但写不回系统」。
+var wgOutCount, wgOutDropped atomic.Int64
+
+// WgDecryptedCount 已解密并投进 out 队列的包数（wireguard-go 解密成功才会累加）。
+func WgDecryptedCount() int64 { return wgOutCount.Load() }
+
+// WgDroppedCount out 队列满被丢弃的包数。
+func WgDroppedCount() int64 { return wgOutDropped.Load() }
 
 // WgReadOutboundPacket 阻塞取出一个已解密的裸 IP 包；设备关闭后返回 nil。
 func WgReadOutboundPacket() []byte {

@@ -28,6 +28,13 @@ final class PacketDispatcher {
     /// 物理网卡，否则会被自己的 utun 吸回去、永远收不到回包。
     private var extraExcludes: [String] = []
 
+    /// 透传型引擎当前的地址（引擎名 → 点分十进制）。
+    ///
+    /// **不能缓存**：Tailscale 启动时只有占位地址 100.64.0.254，登录后才换成真实的
+    /// 100.x。若在 register() 时求值一次，之后所有回包的源地址都会被改写成那个
+    /// 已经不存在的占位地址，内核直接丢弃——表现为「隧道连着、status 显示 Running、
+    /// 但内网一个包都通不了」。所以每次改写都读引擎的实时 addresses。
+
     /// 诊断计数，便于在 App 侧确认包确实流经了分类器
     private(set) var inboundCount: UInt64 = 0
     private(set) var outboundCount: UInt64 = 0
@@ -50,6 +57,21 @@ final class PacketDispatcher {
         // 最长前缀优先，保证 /32 的主机路由能盖过 /10 的段路由
         entries.sort { $0.0.prefixLength > $1.0.prefixLength }
         self.table = entries
+    }
+
+    /// 各引擎最近一次出向时，**内核实际选择**的源地址（如 198.19.0.1）。
+    ///
+    /// 回向必须还原成它，而不是引擎的隧道地址：内核只认得自己当初写进
+    /// 连接的那个地址，还原成别的值会被判定为「不属于任何连接」并回 RST。
+    private var kernelSources: [String: String] = [:]
+
+    private func setKernelSource(_ engine: String, _ addr: String) {
+        lock.lock(); defer { lock.unlock() }
+        kernelSources[engine] = addr
+    }
+
+    private func kernelSource(for engine: String) -> String? {
+        lock.withLock { kernelSources[engine] }
     }
 
     /// 注入引擎外联目标的排除网段（必须在 buildSettings() 之前调用）
@@ -120,9 +142,22 @@ final class PacketDispatcher {
                 if seq <= 12 || seq % 200 == 0 {
                     Diag.log("outbound", "#\(seq) \(name) \(packet.count)B -> flow")
                 }
-                let version = (packet.first ?? 0) >> 4
+                // 引擎 → OS：把 NAT 过的目的地址还原成内核认得的隧道地址
+                let restored: Data
+                if let kernelSrc = self.kernelSource(for: name) {
+                    restored = SourceRewriter.rewrite(packet, destination: kernelSrc) ?? packet
+                } else {
+                    restored = packet
+                }
+                let version = (restored.first ?? 0) >> 4
                 let af: NSNumber = version == 6 ? 30 : 2
-                self.flow.writePackets([packet], withProtocols: [af])
+                // writePackets 会返回 false 表示写回被拒（包被静默丢弃）。
+                // 不检查返回值的话，引擎明明产出了包、系统却一个都没收到，
+                // 而日志上看起来一切正常。
+                let ok = self.flow.writePackets([restored], withProtocols: [af])
+                if !ok {
+                    Diag.log("outbound", "FAIL #\(seq) \(name) \(restored.count)B 写回被拒")
+                }
             }
         }
 
@@ -182,11 +217,34 @@ final class PacketDispatcher {
                 let entries = self.lock.withLock { self.table }
                 let engine = entries.first(where: { $0.0.contains(dst) })?.1 ?? self.fallback
                 let seq = self.bumpInbound()
-                if seq <= 12 || seq % 200 == 0 {
+                // 采样会掩盖问题：把改写前后的源地址都记下来，
+                // 并让 wg/ts 的包始终可见（它们的量小，正是排查重点）。
+                if seq <= 12 || seq % 200 == 0 || engine?.name != "sdp" {
                     let src = IPPrefix.source(of: packet).map(IPPrefix.string) ?? "?"
                     Diag.log("pump", "#\(seq) \(src) -> \(IPPrefix.string(dst)) \(packet.count)B -> \(engine?.name ?? "无引擎,丢弃")")
                 }
-                engine?.deliver(packet)
+                guard let engine else { continue }
+                // 不做源地址改写。
+                //
+                // 单 utun 上只保留隧道自己的地址（SDP 的 198.19.0.1），内核选源
+                // 没有别的候选，天然一致；WG/TS 的真实地址由各自引擎在用户态
+                // 使用，不需要内核知道。回包写回 flow 时目的地址正是内核当初
+                // 三层隧道（WG）做双向地址转换，详见 SourceRewriter 的说明：
+                //   OS → 引擎：源 198.19.0.1 → 10.0.0.3（对端才认）
+                //   引擎 → OS：目的 10.0.0.3 → 198.19.0.1（内核才认，否则回 RST）
+                // 终结型引擎（SDP/TS）不改，它们在用户态重建连接，源地址不参与决策。
+                if let tunnelAddr = engine.tunnelSourceAddress {
+                    if let kernelSrc = IPPrefix.source(of: packet).map(IPPrefix.string) {
+                        setKernelSource(engine.name, kernelSrc)
+                    }
+                    if let fixed = SourceRewriter.rewrite(packet, source: tunnelAddr) {
+                        engine.deliver(fixed)
+                    } else {
+                        engine.deliver(packet)
+                    }
+                } else {
+                    engine.deliver(packet)
+                }
             }
             self.pump()
         }

@@ -197,11 +197,19 @@ final class TSBridgeRuntime: TailscaleRuntime {
         pump()
         }
 
-        // Go → OS：阻塞读取 Go 侧 Write 产出的包并写回虚拟网卡
+        // Go → OS：阻塞读取 Go 侧 Write 产出的包并写回虚拟网卡。
+        //
+        // 拿不到包时不能直接 break：`readOutbound` 只在设备关闭时返回 nil，
+        // 但重建期间也可能短暂返回。一旦退出，tsnet 之后解出的所有包都写不回去，
+        // 表现为「隧道连着、status 显示 Running，但内网一个包都通不了」。
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             while !self.stopped {
-                guard let pkt = TsbridgeReadOutboundPacket() else { break }
+                guard let pkt = TsbridgeReadOutboundPacket() else {
+                    if self.stopped { break }
+                    Thread.sleep(forTimeInterval: 0.02)
+                    continue
+                }
                 let bytes = pkt as Data
                 guard !bytes.isEmpty else { continue }
                 // 裸 IP 包首字节高 4 位：4 = IPv4, 6 = IPv6
