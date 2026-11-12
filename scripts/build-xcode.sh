@@ -4,10 +4,11 @@
 # 前置：
 #   - Xcode 26+、xcodegen
 #   - Developer ID Application 证书（team KLU8GF65GP）
-#   - build/profiles/{app,ne,wg,ts}.provisionprofile，并已安装到
+#   - build/profiles/{app,ne}.provisionprofile，并已安装到
 #     ~/Library/MobileDevice/Provisioning Profiles/（否则 xcodebuild 找不到 profile）
 #
-# 产物：dist/SDP.app（含 3 个内嵌系统扩展，已签名，未公证）
+# 产物：dist/SDP.app（含 1 个内嵌系统扩展 SDPNE，已签名，未公证）
+#       公证请继续跑 scripts/notarize.sh
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -19,7 +20,7 @@ command -v xcodegen >/dev/null 2>&1 || { echo "缺少 xcodegen：brew install xc
 echo "==> 生成 SDP.xcodeproj"
 xcodegen generate
 
-echo "==> 构建 Release（4 个 target）"
+echo "==> 构建 Release（2 个 target：SDP + SDPNE）"
 xcodebuild build \
   -project SDP.xcodeproj \
   -scheme SDP \

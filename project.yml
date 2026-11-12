@@ -86,8 +86,9 @@ targets:
       - path: ne/main.swift
       - path: ne/bridge.h
       - path: Tools/TSBridgeRuntime.swift
-      - path: ne/TSProvider.swift
-      # 合并用的分类器与三个引擎适配层；先挂在这里参与编译验证，暂不接入运行时
+      # Tailscale 引擎的桥接契约（TailscaleRuntime / TSTunnelSettings / 消息路由）
+      - path: ne/TailscaleRuntime.swift
+      # 合并用的一次性入口：MergedProvider + 分类器 + 三个引擎适配层
       - path: ne/Merged
       - path: macapp/Core/RuleStore.swift
       - path: macapp/Core/RuleText.swift

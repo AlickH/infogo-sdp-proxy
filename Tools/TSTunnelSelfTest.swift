@@ -3,7 +3,7 @@ import NetworkExtension
 import Darwin
 
 /// Tailscale NE 宿主层自检：不需要签名、不需要真实引擎、不需要 root。
-/// 用 swiftc 同时编入 `ne/TSProvider.swift` 与 `macapp/TSManager.swift` 后运行，
+/// 用 swiftc 同时编入 `ne/TailscaleRuntime.swift` 与 `macapp/TSManager.swift` 后运行，
 /// 验证 App 侧与扩展侧的协议契约是否一致。命令见 README「宿主层自检」。
 @main
 struct TSTunnelSelfTest {
@@ -137,7 +137,7 @@ struct TSTunnelSelfTest {
 
 /// 自检用的引擎替身：只验证协议调用链，不做任何网络 I/O。
 /// `NEPacketTunnelProvider` 不能在非扩展环境实例化，所以消息通道测的是
-/// `TSMessageRouter` 而不是直接构造 `TSProvider`。
+/// `TSMessageRouter` 而不是直接构造 Provider。
 private final class MockTailscaleRuntime: TailscaleRuntime {
     var loggedOut = false
     var stopped = false

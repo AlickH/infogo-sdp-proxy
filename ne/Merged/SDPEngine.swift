@@ -5,7 +5,7 @@ import Darwin
 
 /// 合并模式下的 SDP 透明代理引擎。
 ///
-/// 由 `ne/Provider.swift` 整体搬来，去掉了 `NEPacketTunnelProvider` 继承、
+/// 由合并前 SDPNE 的 `Provider` 整体搬来（该文件已随合并删除），去掉 `NEPacketTunnelProvider` 继承、
 /// `setTunnelNetworkSettings` 和 `packetFlow` 持有：
 /// 网络设置与 flow 由 `PacketDispatcher` 统一管，这里只负责
 /// hev（lwIP + SOCKS5）这条管道本身。

@@ -2,25 +2,24 @@ import Foundation
 import NetworkExtension
 import Network
 
-/// Tailscale Packet Tunnel 系统扩展（宿主层）
+/// Tailscale 引擎的桥接契约与网络设置辅助。
 ///
-/// 与 `WGProvider` 依赖 WireGuardKit 一样，Tailscale 的控制面 + wireguard-go 数据面
-/// 由构建期链接的 Go 引擎提供。官方开源仓库是 `github.com/tailscale/tailscale`
-/// （`ipn` / `wgengine` / `cmd/tailscaled`）；按其开源政策，Apple 平台的
-/// NetworkExtension 宿主层闭源，**没有官方公开的 Swift 桥接框架**，也不存在
-/// `tailscale/ipn-go-bridge` 这个仓库。因此需要构建方自行把 daemon 封装成
-/// 实现 `TailscaleRuntime` 的适配层。
+/// 合并后 Tailscale 不再是独立的系统扩展，而是 `MergedProvider` 里的一个引擎
+/// （见 `Merged/TSEngine.swift`）。本文件只保留「与引擎实现解耦」所需的部分：
 ///
-/// 本仓库只放 NetworkExtension 侧的生命周期、配置下发、packetFlow 与 App
-/// 消息通道，通过 `TailscaleRuntime` 协议与引擎解耦。构建 TSNE 二进制时，
-/// 把引擎适配器注册到 `TailscaleRuntimeFactory`：
+///   - `TailscaleRuntime` 协议：引擎要提供的最小能力集合
+///   - `TailscaleRuntimeFactory`：引擎注入点（`Tools/TSBridgeRuntime.swift` 里
+///     `registerTailscaleRuntimeBridge()` 会把真实的 Go 桥接实现注册进来）
+///   - `TSBridgeSetup`：`-D TS_HAS_BRIDGE` 时触发一次注册
+///   - `TSTunnelSettings`：把控制面下发的地址/路由/DNS 转成 `NEPacketTunnelNetworkSettings`
+///   - `TSMessageRouter`：App ↔ 扩展消息通道的纯逻辑层（可脱离 NE 上下文自检）
 ///
-/// ```swift
-/// // 适配层由 TS_BRIDGE_SRC 提供，类名/模块名由构建方决定
-/// TailscaleRuntimeFactory.register { flow in MyTailscaleRuntime(packetFlow: flow) }
-/// ```
+/// 官方开源仓库是 `github.com/tailscale/tailscale`（`ipn` / `wgengine` /
+/// `cmd/tailscaled`）；按其开源政策，Apple 平台的 NetworkExtension 宿主层闭源，
+/// **没有官方公开的 Swift 桥接框架**，引擎适配层由构建方自行提供（本仓库是
+/// `Tools/TSBridgeRuntime.swift` + `Vendor/Tsbridge.xcframework`）。
 ///
-/// 未注册时隧道会明确以 `engineNotEmbedded` 失败，不会伪装成已连接。
+/// 未注册时引擎会明确以 `engineNotEmbedded` 失败，不会伪装成已连接。
 /// 详见 README「Tailscale」章节。
 
 // MARK: - 引擎桥接协议
@@ -101,9 +100,9 @@ final class TailscaleRuntimeFactory {
 }
 
 /// 引擎适配层的注册钩子。
-/// 构建 TSNE 时若传入 `TS_BRIDGE_SRC`，`build-tsne.sh` 会加 `-D TS_HAS_BRIDGE`；
-/// 适配层需提供全局函数 `registerTailscaleRuntimeBridge()`，在其中调用
-/// `TailscaleRuntimeFactory.register`。静态常量保证只注册一次。
+/// SDPNE 目标带 `-D TS_HAS_BRIDGE`；适配层需提供全局函数
+/// `registerTailscaleRuntimeBridge()`，在其中调用 `TailscaleRuntimeFactory.register`。
+/// 静态常量保证只注册一次。
 enum TSBridgeSetup {
     private static let once: Void = {
         #if TS_HAS_BRIDGE
@@ -197,69 +196,6 @@ struct TSMessageRouter {
         default:
             NSLog("[TS] 未知 App 消息: %@", cmd)
             return nil
-        }
-    }
-}
-
-// MARK: - Provider
-
-final class TSProvider: NEPacketTunnelProvider {
-    private var runtime: TailscaleRuntime?
-
-    override func startTunnel(options: [String: NSObject]? = nil,
-                              completionHandler: @escaping (Error?) -> Void) {
-        TSBridgeSetup.registerIfNeeded()
-        guard let proto = protocolConfiguration as? NETunnelProviderProtocol,
-              let cfg = proto.providerConfiguration,
-              let controlURL = cfg["controlURL"] as? String,
-              let host = URL(string: controlURL)?.host, !host.isEmpty else {
-            NSLog("[TS] 配置无效，缺少 Control URL")
-            completionHandler(TailscaleRuntimeError.invalidConfig)
-            return
-        }
-
-        guard let engine = TailscaleRuntimeFactory.make(flow: packetFlow) else {
-            NSLog("[TS] 未链接 Tailscale 引擎（未提供 TailscaleRuntime 适配层）")
-            completionHandler(TailscaleRuntimeError.engineNotEmbedded)
-            return
-        }
-        runtime = engine
-        NSLog("[TS] 启动 tailnet control=%@ hostname=%@", controlURL,
-              (cfg["hostname"] as? String) ?? "(default)")
-
-        // 路由/DNS 由引擎在拿到控制面分配的 100.x.y.z 之后回调设置；
-        // 引擎也可在节点上下线、子网路由或 exit node 变化时再次调用。
-        engine.start(configuration: cfg,
-                     applySettings: { [weak self] settings, done in
-                         self?.setTunnelNetworkSettings(settings, completionHandler: done)
-                     },
-                     completion: { error in
-                         if let error = error {
-                             NSLog("[TS] 启动失败: %@", String(describing: error))
-                         } else {
-                             NSLog("[TS] 隧道已就绪")
-                         }
-                         completionHandler(error)
-                     })
-    }
-
-    /// App ↔ 扩展消息通道：`status` / `logout` / `ping`
-    override func handleAppMessage(_ messageData: Data,
-                                   completionHandler: ((Data?) -> Void)? = nil) {
-        let router = TSMessageRouter(runtime: { [weak self] in self?.runtime })
-        completionHandler?(router.handle(messageData))
-    }
-
-    override func stopTunnel(with reason: NEProviderStopReason,
-                             completionHandler: @escaping () -> Void) {
-        NSLog("[TS] 停止隧道 reason=%@", String(describing: reason))
-        guard let engine = runtime else {
-            completionHandler()
-            return
-        }
-        engine.stop { [weak self] in
-            self?.runtime = nil
-            completionHandler()
         }
     }
 }

@@ -4,7 +4,7 @@ import Tsbridge
 
 /// 合并模式下的 WireGuard 引擎。
 ///
-/// 逻辑来自 `ne/WGProvider.swift`，但去掉了 `setTunnelNetworkSettings`
+/// 逻辑来自合并前 WGNE 的 `WGProvider`（该文件已随合并删除），但去掉了 `setTunnelNetworkSettings`
 /// 和 `packetFlow` 的持有——这两件事在合并后由 `PacketDispatcher` 统一负责，
 /// 这里只保留「吃裸包 / 吐裸包」。
 final class WGEngine: TunnelEngine {

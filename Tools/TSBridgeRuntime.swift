@@ -15,10 +15,8 @@ import Tsbridge
 ///
 /// 构建：
 /// ```bash
-/// ./scripts/build-tsbridge.sh
-/// TS_BRIDGE_SRC=Tools/TSBridgeRuntime.swift \
-/// TS_BRIDGE_FWK=/tmp/Tsbridge.xcframework \
-///   ./scripts/build-tsne.sh
+/// ./scripts/build-tsbridge.sh          # 产出 Vendor/Tsbridge.xcframework
+/// ./scripts/build-xcode.sh             # 由 project.yml 编译进 SDPNE
 /// ```
 final class TSBridgeRuntime: TailscaleRuntime {
     private let flow: NEPacketTunnelFlow
