@@ -132,7 +132,7 @@ struct TSRuntimeStatus: Decodable {
 /// Tailscale 系统扩展管理（Packet Tunnel），支持多配置
 /// `@unchecked Sendable`：NE 的 @Sendable 回调需要捕获 self；状态仅在主队列读写。
 final class TSManager: NSObject, ObservableObject, @unchecked Sendable {
-    static let extensionID = "com.alick.sdp-proxy.ts"
+    static let extensionID = MergedTunnel.extensionID
     static var configPath: String { NSHomeDirectory() + "/.sdp-proxy/tailscale.json" }
     static var logPath: String { NSHomeDirectory() + "/.sdp-proxy/tailscale.log" }
 
@@ -291,6 +291,7 @@ final class TSManager: NSObject, ObservableObject, @unchecked Sendable {
     // MARK: - 连接
 
     func enable() {
+        MergedTunnel.shared.set("ts", enabled: true)
         guard Self.isInApplicationsFolder else {
             needsRelocation = true
             statusText = "扩展安装失败"
@@ -351,8 +352,13 @@ final class TSManager: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func disable() {
-        log("断开连接")
-        manager?.connection.stopVPNTunnel()
+        log("关闭 Tailscale 功能")
+        MergedTunnel.shared.set("ts", enabled: false)
+        if MergedTunnel.shared.isEmpty {
+            manager?.connection.stopVPNTunnel()
+        } else {
+            configureAndStart()
+        }
         active = false
         statusText = "已关闭"
         stopPolling()
@@ -374,7 +380,7 @@ final class TSManager: NSObject, ObservableObject, @unchecked Sendable {
     func logout() {
         guard let session = manager?.connection as? NETunnelProviderSession else { return }
         log("请求退出登录")
-        try? session.sendProviderMessage(Data("logout".utf8)) { _ in }
+        try? session.sendProviderMessage(MergedTunnel.command("ts", "logout")) { _ in }
     }
 
     /// 一键登录：点一下 → 激活扩展 / 建隧道 → 拿到 AuthURL 立刻开浏览器。
@@ -406,7 +412,7 @@ final class TSManager: NSObject, ObservableObject, @unchecked Sendable {
         if let session = manager?.connection as? NETunnelProviderSession,
            manager?.connection.status == .connected {
             log("请求交互式登录")
-            try? session.sendProviderMessage(Data("login".utf8)) { _ in }
+            try? session.sendProviderMessage(MergedTunnel.command("ts", "login")) { _ in }
             return
         }
         // ③ 隧道没起来：先确保扩展已安装且是最新版本（这一步会触发系统扩展升级），
@@ -478,7 +484,7 @@ final class TSManager: NSObject, ObservableObject, @unchecked Sendable {
 
     private func pollRuntime() {
         guard let session = manager?.connection as? NETunnelProviderSession else { return }
-        try? session.sendProviderMessage(Data("status".utf8)) { [weak self] data in
+        try? session.sendProviderMessage(MergedTunnel.command("ts")) { [weak self] data in
             DispatchQueue.main.async { self?.handleRuntime(data) }
         }
     }
@@ -605,9 +611,10 @@ final class TSManager: NSObject, ObservableObject, @unchecked Sendable {
                 "acceptDNS": cfg.acceptDNS,
             ]
             if let mtu = Int(cfg.mtu), mtu >= 576 { providerConfig["mtu"] = mtu }
-            proto.providerConfiguration = providerConfig
+            MergedTunnel.shared.set("ts", enabled: true, config: providerConfig)
+            proto.providerConfiguration = MergedTunnel.shared.providerConfiguration()
             mgr.protocolConfiguration = proto
-            mgr.localizedDescription = "SDP Tailscale"
+            mgr.localizedDescription = "SDP"
             mgr.isEnabled = true
             if cfg.onDemand {
                 let rule = NEOnDemandRuleConnect()

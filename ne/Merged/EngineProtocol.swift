@@ -56,6 +56,8 @@ protocol TunnelEngine: AnyObject {
 
     /// 交给内核的虚拟网卡地址（CIDR），以及 DNS 设置
     var addresses: [String] { get }
+    /// 不进入隧道的路由（如 127.0.0.1/32）
+    var excludeRoutes: [String] { get }
     var dnsServers: [String] { get }
     var dnsMatchDomain: String { get }
     var mtu: Int { get }
@@ -74,4 +76,8 @@ protocol TunnelEngine: AnyObject {
 
     /// App 侧发来的控制消息（status / login / logout 等）
     func handleMessage(_ message: Data, completion: @escaping (Data?) -> Void)
+}
+
+extension TunnelEngine {
+    var excludeRoutes: [String] { [] }
 }

@@ -63,7 +63,7 @@ struct WGStore: Codable {
 /// WireGuard 系统扩展管理（Packet Tunnel），支持多配置
 /// `@unchecked Sendable`：NE 的 @Sendable 回调需要捕获 self；状态仅在主队列读写。
 final class WGManager: NSObject, ObservableObject, @unchecked Sendable {
-    static let extensionID = "com.alick.sdp-proxy.wg"
+    static let extensionID = MergedTunnel.extensionID
     static var configPath: String { NSHomeDirectory() + "/.sdp-proxy/wireguard.json" }
 
     @Published var statusText = "未启用"
@@ -226,6 +226,7 @@ final class WGManager: NSObject, ObservableObject, @unchecked Sendable {
     // MARK: - 连接
 
     func enable() {
+        MergedTunnel.shared.set("wg", enabled: true)
         log("请求安装/激活扩展")
         NSLog("[WG] 请求安装扩展 %@", Self.extensionID)
         statusText = "正在安装扩展…"
@@ -236,8 +237,13 @@ final class WGManager: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func disable() {
-        log("断开连接")
-        manager?.connection.stopVPNTunnel()
+        log("关闭 WireGuard 功能")
+        MergedTunnel.shared.set("wg", enabled: false)
+        if MergedTunnel.shared.isEmpty {
+            manager?.connection.stopVPNTunnel()
+        } else {
+            configureAndStart()
+        }
         active = false
         statusText = "已关闭"
     }
@@ -259,7 +265,7 @@ final class WGManager: NSObject, ObservableObject, @unchecked Sendable {
 
     private func pollRuntime() {
         guard let session = manager?.connection as? NETunnelProviderSession else { return }
-        try? session.sendProviderMessage(Data("status".utf8)) { [weak self] data in
+        try? session.sendProviderMessage(MergedTunnel.command("wg")) { [weak self] data in
             guard let self = self, let data = data,
                   let text = String(data: data, encoding: .utf8) else { return }
             self.handleRuntime(text)
@@ -391,9 +397,11 @@ final class WGManager: NSObject, ObservableObject, @unchecked Sendable {
                 "persistentKeepalive": Int(cfg.keepalive) ?? 25,
             ]
             if let mtu = Int(cfg.mtu), mtu >= 576 { providerConfig["mtu"] = mtu }
-            proto.providerConfiguration = providerConfig
+            // 合并后只保存一份 features 配置；WG 自己的参数放在 "wg" 子字典里
+            MergedTunnel.shared.set("wg", enabled: true, config: providerConfig)
+            proto.providerConfiguration = MergedTunnel.shared.providerConfiguration()
             mgr.protocolConfiguration = proto
-            mgr.localizedDescription = "SDP WireGuard"
+            mgr.localizedDescription = "SDP"
             mgr.isEnabled = true
             if cfg.onDemand {
                 let rule = NEOnDemandRuleConnect()

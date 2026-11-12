@@ -6,7 +6,7 @@ import Combine
 /// 系统扩展（透明代理）管理：安装 → 配置 → 启动
 /// `@unchecked Sendable`：NE 的 @Sendable 回调需要捕获 self；本类状态仅在主队列读写。
 final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
-    static let extensionID = "com.alick.sdp-proxy.ne"
+    static let extensionID = MergedTunnel.extensionID
 
     @Published var statusText = "未启用"
     @Published var active = false
@@ -38,6 +38,7 @@ final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
 
     func enable(config: [String: Any]) {
         self.pendingConfig = config
+        MergedTunnel.shared.set("sdp", enabled: true, config: config)
         statusText = "正在安装扩展…"
         let req = OSSystemExtensionRequest.activationRequest(
             forExtensionWithIdentifier: Self.extensionID, queue: .main)
@@ -46,7 +47,14 @@ final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
     }
 
     func disable() {
-        manager?.connection.stopVPNTunnel()
+        // 合并后不能 stop 整条隧道——其它功能可能还在用。
+        // 只把本功能从 features 里摘掉并重新下发配置。
+        MergedTunnel.shared.set("sdp", enabled: false)
+        if MergedTunnel.shared.isEmpty {
+            manager?.connection.stopVPNTunnel()
+        } else {
+            configureAndStart()
+        }
         statusText = "已关闭"
         active = false
     }
@@ -149,9 +157,9 @@ final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
             let proto = NETunnelProviderProtocol()
             proto.providerBundleIdentifier = Self.extensionID
             proto.serverAddress = "127.0.0.1"
-            proto.providerConfiguration = self.pendingConfig
+            proto.providerConfiguration = MergedTunnel.shared.providerConfiguration()
             mgr.protocolConfiguration = proto
-            mgr.localizedDescription = "SDP 全局接管"
+            mgr.localizedDescription = "SDP"
             mgr.isEnabled = true
             mgr.saveToPreferences { error in
                 if let error = error {

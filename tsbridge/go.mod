@@ -6,6 +6,7 @@ tool golang.org/x/mobile/cmd/gobind
 
 require (
 	github.com/tailscale/wireguard-go v0.0.0-20260928213032-417aef361226
+	golang.zx2c4.com/wireguard v0.0.0-20260522210424-ecfc5a8d5446
 	tailscale.com v1.104.5
 )
 

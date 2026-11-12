@@ -70,14 +70,11 @@ targets:
           - "-framework CryptoKit"
           - "-framework NetworkExtension"
           - "-framework SystemExtensions"
+    # 合并后只有一个系统扩展：三个功能由 providerConfiguration["features"] 控制
     dependencies:
       - target: SDPNE
-      - target: WGNE
-      - target: TSNE
     embeddedSystemExtensions:
       - SDPNE
-      - WGNE
-      - TSNE
 
   # ---------------------------------------------------------------------------
   # SDPNE: 透明代理系统扩展（基于 hev 静态库）
@@ -87,7 +84,6 @@ targets:
     platform: macOS
     sources:
       - path: ne/main.swift
-      - path: ne/Provider.swift
       - path: ne/bridge.h
       - path: Tools/TSBridgeRuntime.swift
       - path: ne/TSProvider.swift
@@ -116,79 +112,10 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: ne/bridge.h
         HEADER_SEARCH_PATHS: ["ne", "third_party/hev/lib"]
         LIBRARY_SEARCH_PATHS: ["third_party/hev/lib"]
-        OTHER_LDFLAGS: ["-lhev-socks5-tunnel", "-lhev-task-system", "-llwip", "-lyaml", "-framework NetworkExtension", "-framework Network", "-framework Security", "-framework Wgbridge", "-framework Tsbridge"]
-        # 两个 Go 桥接框架的静态切片目录
-        FRAMEWORK_SEARCH_PATHS:
-          - "$(inherited)"
-          - "Vendor/Wgbridge.xcframework/macos-arm64_x86_64"
-          - "Vendor/Tsbridge.xcframework/macos-arm64_x86_64"
-        OTHER_SWIFT_FLAGS: ["-D", "TS_HAS_BRIDGE"]
-        ENABLE_HARDENED_RUNTIME: "YES"
-
-  # ---------------------------------------------------------------------------
-  # WGNE: WireGuard 包隧道系统扩展（WireGuardKit + libwg-go.a）
-  # ---------------------------------------------------------------------------
-  WGNE:
-    type: system-extension
-    platform: macOS
-    sources:
-      - path: ne/main.swift
-      - path: ne/WGProvider.swift
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.alick.sdp-proxy.wg
-        # 关键：系统扩展的 wrapper 目录名必须等于 bundle ID（<bundle-id>.systemextension），
-        # 否则 sysextd 扫不到它，会报 "Extension not found in App bundle"。
-        # 用 PRODUCT_NAME 控制 wrapper 名，EXECUTABLE_NAME / PRODUCT_MODULE_NAME
-        # 保持原名，这样 CFBundleExecutable 和 NEProviderClasses 里的模块名都不变。
-        PRODUCT_NAME: com.alick.sdp-proxy.wg
-        EXECUTABLE_NAME: WGNE
-        PRODUCT_MODULE_NAME: WGNE
-        INFOPLIST_FILE: ne/Info-WG.plist
-        CODE_SIGN_ENTITLEMENTS: ne/WGNE.entitlements
-        PROVISIONING_PROFILE_SPECIFIER: "SDP Proxy WG Developer ID v2"
-        # wireguard-go 改由 wgbridge 提供（内存 tun.Device），
-        # 不再链接 Vendor/wireguard-apple 的 libwg-go.a + WireGuardKit，
-        # 避免两份 wireguard-go 符号冲突。
-        # 产物由 scripts/build-wgbridge.sh 生成（已 gitignore）。
-        FRAMEWORK_SEARCH_PATHS:
-          - "$(inherited)"
-          - "Vendor/Wgbridge.xcframework/macos-arm64_x86_64"
-        OTHER_LDFLAGS: ["-framework Wgbridge", "-framework NetworkExtension", "-framework Network", "-framework Foundation", "-framework Security"]
-        ENABLE_HARDENED_RUNTIME: "YES"
-
-  # ---------------------------------------------------------------------------
-  # TSNE: Tailscale 包隧道系统扩展（tsnet 引擎经 Tsbridge.xcframework 接入）
-  # 引擎：tsbridge/ 由 gomobile 编译为 Vendor/Tsbridge.xcframework
-  #       （scripts/build-tsbridge.sh；产物已 gitignore，构建前需先生成）
-  # 登录：authKey 留空时走交互式登录——扩展把 authURL 放进 status 返回，
-  #       App 侧点击按钮打开浏览器完成 SSO。
-  # ---------------------------------------------------------------------------
-  TSNE:
-    type: system-extension
-    platform: macOS
-    sources:
-      - path: ne/main.swift
-      - path: ne/TSProvider.swift
-      - path: Tools/TSBridgeRuntime.swift
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.alick.sdp-proxy.ts
-        # 关键：系统扩展的 wrapper 目录名必须等于 bundle ID（<bundle-id>.systemextension），
-        # 否则 sysextd 扫不到它，会报 "Extension not found in App bundle"。
-        # 用 PRODUCT_NAME 控制 wrapper 名，EXECUTABLE_NAME / PRODUCT_MODULE_NAME
-        # 保持原名，这样 CFBundleExecutable 和 NEProviderClasses 里的模块名都不变。
-        PRODUCT_NAME: com.alick.sdp-proxy.ts
-        EXECUTABLE_NAME: TSNE
-        PRODUCT_MODULE_NAME: TSNE
-        INFOPLIST_FILE: ne/Info-TS.plist
-        CODE_SIGN_ENTITLEMENTS: ne/TSNE.entitlements
-        PROVISIONING_PROFILE_SPECIFIER: "SDP Proxy TS Developer ID v2"
-        # 声明已链接引擎：TSProvider 会调用 registerTailscaleRuntimeBridge()
-        OTHER_SWIFT_FLAGS: ["-D", "TS_HAS_BRIDGE"]
-        # xcframework 的静态切片目录（gomobile 产物为 universal static framework）
+        OTHER_LDFLAGS: ["-lhev-socks5-tunnel", "-lhev-task-system", "-llwip", "-lyaml", "-framework NetworkExtension", "-framework Network", "-framework Security", "-framework Tsbridge"]
+        # 统一 Go 桥接框架（tsnet + wireguard-go 同包，共享一份 cgo 运行时）
         FRAMEWORK_SEARCH_PATHS:
           - "$(inherited)"
           - "Vendor/Tsbridge.xcframework/macos-arm64_x86_64"
-        OTHER_LDFLAGS: ["-framework Tsbridge", "-framework NetworkExtension", "-framework Network"]
+        OTHER_SWIFT_FLAGS: ["-D", "TS_HAS_BRIDGE"]
         ENABLE_HARDENED_RUNTIME: "YES"

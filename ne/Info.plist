@@ -15,11 +15,11 @@
 	<key>CFBundlePackageType</key>
 	<string>SYSX</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.6.4</string>
+	<string>1.0.0</string>
 	<key>CFBundleVersion</key>
-	<string>44</string>
+	<string>100</string>
 	<key>NSSystemExtensionUsageDescription</key>
-	<string>SDP 需要该扩展把本机 TCP 流量转发到本地 SDP 代理</string>
+	<string>SDP 需要该扩展按功能开关接管 SDP 代理、WireGuard 与 Tailscale 流量</string>
 	<key>NetworkExtension</key>
 	<dict>
 		<key>NEMachServiceName</key>
@@ -27,7 +27,7 @@
 		<key>NEProviderClasses</key>
 		<dict>
 			<key>com.apple.networkextension.packet-tunnel</key>
-			<string>SDPNE.Provider</string>
+			<string>SDPNE.MergedProvider</string>
 		</dict>
 	</dict>
 </dict>

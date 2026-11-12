@@ -1,6 +1,6 @@
 import Foundation
 import NetworkExtension
-import Wgbridge
+import Tsbridge
 
 /// 合并模式下的 WireGuard 引擎。
 ///
@@ -46,7 +46,7 @@ final class WGEngine: TunnelEngine {
         mtu = cfgMTU
 
         // UAPI：密钥 hex；**不能有空行**（IpcSetOperation 把空行当终止解析）；
-        // endpoint 域名由 wgbridge.resolveEndpoints 负责解析成 IP。
+        // endpoint 域名由 Tsbridge 的 wgResolveEndpoints 负责解析成 IP。
         var uapi = "private_key=\(privateHex)\nlisten_port=0\n"
         uapi += "public_key=\(peerHex)\n"
         for cidr in allowed { uapi += "allowed_ip=\(cidr)\n" }
@@ -54,7 +54,7 @@ final class WGEngine: TunnelEngine {
         if keepalive > 0 { uapi += "persistent_keepalive_interval=\(keepalive)\n" }
 
         var startErr: NSError?
-        guard WgbridgeStart(uapi, &startErr) else {
+        guard TsbridgeWgStart(uapi, &startErr) else {
             completion(startErr ?? WGEngineError.invalidConfig)
             return
         }
@@ -63,7 +63,7 @@ final class WGEngine: TunnelEngine {
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
             while !self.stopped {
-                guard let pkt = WgbridgeReadOutboundPacket() else { break }
+                guard let pkt = TsbridgeWgReadOutboundPacket() else { break }
                 let bytes = pkt as Data
                 guard !bytes.isEmpty else { continue }
                 self.outbound?(bytes)
@@ -75,14 +75,14 @@ final class WGEngine: TunnelEngine {
     func stop() {
         stopped = true
         var err: NSError?
-        if !WgbridgeStop(&err) {
+        if !TsbridgeWgStop(&err) {
             NSLog("[WG-Engine] stop 失败: %@", err?.localizedDescription ?? "unknown")
         }
     }
 
     func deliver(_ packet: Data) {
         var err: NSError?
-        if !WgbridgeDeliverInboundPacket(packet, &err) {
+        if !TsbridgeWgDeliverInboundPacket(packet, &err) {
             NSLog("[WG-Engine] inbound 丢包: %@", err?.localizedDescription ?? "closed")
         }
     }
@@ -91,7 +91,7 @@ final class WGEngine: TunnelEngine {
 
     func handleMessage(_ message: Data, completion: @escaping (Data?) -> Void) {
         // App 侧解析 last_handshake_time_sec / rx_bytes / tx_bytes 的格式不变
-        completion(WgbridgeStatus().data(using: .utf8))
+        completion(TsbridgeWgStatus().data(using: .utf8))
     }
 
     private static func hex(fromBase64 s: String) -> String? {

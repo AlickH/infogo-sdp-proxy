@@ -62,6 +62,13 @@ final class PacketDispatcher {
                 }
             }
             ipv4.includedRoutes = routes
+            let excludes = list.flatMap(\.excludeRoutes).compactMap { cidr -> NEIPv4Route? in
+                guard !cidr.contains(":"), let pfx = IPPrefix(cidr: cidr) else { return nil }
+                let bits = pfx.mask.byteSwapped
+                let mask = "\((bits >> 24) & 255).\((bits >> 16) & 255).\((bits >> 8) & 255).\(bits & 255)"
+                return NEIPv4Route(destinationAddress: cidrHost(cidr), subnetMask: mask)
+            }
+            if !excludes.isEmpty { ipv4.excludedRoutes = excludes }
             settings.ipv4Settings = ipv4
         }
 
