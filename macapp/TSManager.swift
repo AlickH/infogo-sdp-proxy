@@ -1,7 +1,6 @@
 import Foundation
 import AppKit
 import NetworkExtension
-import SystemExtensions
 import Combine
 
 // MARK: - 配置模型
@@ -163,7 +162,6 @@ final class TSManager: NSObject, ObservableObject, @unchecked Sendable {
     /// 用户主动发起交互式登录时置位：authURL 一到就自动拉起浏览器（只拉一次）
     private var autoOpenLogin = false
     /// 持有清理器，避免请求还没回来就被释放
-    private var recordCleaner: SXRecordCleaner?
 
     override init() {
         super.init()
@@ -292,21 +290,8 @@ final class TSManager: NSObject, ObservableObject, @unchecked Sendable {
 
     func enable() {
         MergedTunnel.shared.set("ts", enabled: true)
-        guard Self.isInApplicationsFolder else {
-            needsRelocation = true
-            statusText = "扩展安装失败"
-            error = "系统扩展只能从「应用程序」文件夹激活。当前 App 在 \(Self.currentLocationHint)，请点下方按钮搬到 /Applications 后重试。"
-            log("App 不在 /Applications，无法激活系统扩展")
-            return
-        }
-        needsRelocation = false
-        log("请求安装/激活扩展")
-        NSLog("[TS] 请求安装扩展 %@", Self.extensionID)
-        statusText = "正在安装扩展…"
-        let req = OSSystemExtensionRequest.activationRequest(
-            forExtensionWithIdentifier: Self.extensionID, queue: .main)
-        req.delegate = self
-        OSSystemExtensionManager.shared.submitRequest(req)
+        statusText = "正在配置…"
+        configureAndStart()
     }
 
     /// 把自身拷进 /Applications 再重启——系统扩展激活的前置条件
@@ -429,32 +414,6 @@ final class TSManager: NSObject, ObservableObject, @unchecked Sendable {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             self?.login()
         }
-    }
-
-    /// 清掉本 App 在系统扩展数据库里的旧记录，再重新激活。
-    /// 用于反复替换 /Applications 里的 App 之后 sysextd 报
-    /// "Extension not found in App bundle" 的场景。
-    func resetExtensionRecords() {
-        guard Self.isInApplicationsFolder else {
-            needsRelocation = true
-            statusText = "扩展安装失败"
-            error = "请先把 App 放到「应用程序」文件夹。"
-            return
-        }
-        log("清理系统扩展数据库里的旧记录…")
-        statusText = "正在清理扩展记录…"
-        error = ""
-        let ids = ["com.alick.sdp-proxy.ne", "com.alick.sdp-proxy.wg", Self.extensionID]
-        let cleaner = SXRecordCleaner(identifiers: ids) { [weak self] failures in
-            guard let self = self else { return }
-            self.log("清理完成（失败 \(failures.count) 条）")
-            self.recordCleaner = nil
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                self.login()
-            }
-        }
-        recordCleaner = cleaner
-        cleaner.start()
     }
 
     private func clearRuntime() {
@@ -672,100 +631,5 @@ final class TSManager: NSObject, ObservableObject, @unchecked Sendable {
         s.split(whereSeparator: { $0 == "," || $0 == "\n" })
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-    }
-}
-
-extension TSManager: OSSystemExtensionRequestDelegate {
-    func request(_ request: OSSystemExtensionRequest,
-                 actionForReplacingExtension existing: OSSystemExtensionProperties,
-                 withExtension ext: OSSystemExtensionProperties) -> OSSystemExtensionRequest.ReplacementAction {
-        .replace
-    }
-
-    func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
-        statusText = "等待系统批准扩展…"
-    }
-
-    func request(_ request: OSSystemExtensionRequest,
-                 didFinishWithResult result: OSSystemExtensionRequest.Result) {
-        log("扩展已就绪")
-        statusText = "扩展已安装"
-        configureAndStart()
-    }
-
-    func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
-        log("扩展安装失败: \(error.localizedDescription)")
-        NSLog("[TS] 安装失败: %@", error.localizedDescription)
-        let msg = error.localizedDescription
-        if msg.contains("/Applications") || msg.contains("Applications folder") {
-            needsRelocation = true
-            statusText = "扩展安装失败"
-            self.error = "系统扩展只能从「应用程序」文件夹激活。当前 App 在 \(Self.currentLocationHint)，请点下方按钮搬到 /Applications 后重试。"
-            return
-        }
-        // macOS 的「系统扩展数据库」里还留着旧版本记录时会报这个：
-        // 数据库（/Library/SystemExtensions/db.plist）按 bundle ID 记着 App 和它的扩展列表，
-        // 换了新版 App 之后旧记录不会自动刷新，sysextd 就找不到新加的扩展。
-        // 重启一次会清掉所有 "waiting to uninstall on reboot" 的旧记录并重新扫描。
-        if msg.contains("Extension not found in App bundle") {
-            statusText = "扩展安装失败"
-            self.error = "系统里还留着旧版本的系统扩展记录（sysextd 找不到新扩展）。重启一次 Mac 后再点登录即可恢复。"
-            return
-        }
-        self.error = msg
-        statusText = "扩展安装失败"
-    }
-}
-
-// MARK: - 清理系统扩展数据库里的旧记录
-
-/// 系统扩展数据库（/Library/SystemExtensions/db.plist）按 bundle ID 记住「哪个 App 装了哪些扩展」。
-/// 反复替换 /Applications 里的 App 之后，旧记录会和实际 bundle 内容对不上，
-/// sysextd 就会报 "Extension not found in App bundle"。
-///
-/// `deactivationRequest` 只有**宿主 App 自己**能发，而且不需要 root，
-/// 所以用它把旧记录删掉，下次激活就是干净的首次安装。
-final class SXRecordCleaner: NSObject, OSSystemExtensionRequestDelegate, @unchecked Sendable {
-    private var pending: [String] = []
-    private var failed: [String] = []
-    private let onDone: ([String]) -> Void
-
-    init(identifiers: [String], onDone: @escaping ([String]) -> Void) {
-        self.pending = identifiers
-        self.onDone = onDone
-        super.init()
-    }
-
-    func start() { next() }
-
-    private func next() {
-        guard !pending.isEmpty else {
-            let f = failed
-            onDone(f)
-            return
-        }
-        let id = pending.removeFirst()
-        let req = OSSystemExtensionRequest.deactivationRequest(
-            forExtensionWithIdentifier: id, queue: .main)
-        req.delegate = self
-        OSSystemExtensionManager.shared.submitRequest(req)
-    }
-
-    func request(_ request: OSSystemExtensionRequest,
-                 actionForReplacingExtension existing: OSSystemExtensionProperties,
-                 withExtension ext: OSSystemExtensionProperties) -> OSSystemExtensionRequest.ReplacementAction {
-        .replace
-    }
-
-    func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {}
-
-    func request(_ request: OSSystemExtensionRequest,
-                 didFinishWithResult result: OSSystemExtensionRequest.Result) {
-        next()
-    }
-
-    func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
-        failed.append(error.localizedDescription)
-        next()
     }
 }

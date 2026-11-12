@@ -1,6 +1,5 @@
 import Foundation
 import NetworkExtension
-import SystemExtensions
 import Combine
 
 /// 合并后的 **VPN 总开关**。
@@ -9,16 +8,16 @@ import Combine
 /// 一个独立开关；三个页面里的开关只决定「本功能是否参与这条隧道」
 /// （`MergedTunnel.features`），不再负责启动/停止 VPN。
 ///
-/// - 总开关开：确保扩展已激活 → 保存 providerConfiguration → 建立隧道
+/// - 总开关开：保存 providerConfiguration → 建立隧道（app extension 由系统按需加载，
+///   **不需要** OSSystemExtensionRequest 激活，也不需要用户在系统设置里批准）
 /// - 总开关关：只 stop 隧道，保留配置和三个功能的启用状态
 /// - 功能开关变化：`applyFeatures()` 在隧道连着时热重连，没连时什么都不做
 /// 所有可变状态（wanted / connected / statusText / manager）都在主队列上读写：
-/// 偏好设置的回调统一 `DispatchQueue.main.async` 回抛，扩展激活回调也由系统在主队列
-/// 派发，因此 @unchecked Sendable 成立（Swift 6 要求静态单例可发送）。
-final class MergedVPN: NSObject, ObservableObject, OSSystemExtensionRequestDelegate, @unchecked Sendable {
+/// 偏好设置的回调统一 `DispatchQueue.main.async` 回抛，因此 @unchecked Sendable 成立。
+final class MergedVPN: NSObject, ObservableObject, @unchecked Sendable {
     static let shared = MergedVPN()
 
-    static let extensionID = "com.alick.sdp-proxy.ne"
+    static let extensionID = "com.alick.sdp-proxy.tunnel"
     private static let wantedKey = "sdp.merged.vpnWanted"
 
     /// 总开关状态（持久化，App 重启后据此自动恢复）
@@ -82,21 +81,7 @@ final class MergedVPN: NSObject, ObservableObject, OSSystemExtensionRequestDeleg
 
     private func start() {
         note("start() wanted=\(wanted)")
-        refresh { [weak self] existing in
-            guard let self else { return }
-            if existing == nil {
-                // 首次使用：先请求激活系统扩展，激活完成后再建隧道
-                note("无已保存 VPN 配置 -> 请求激活扩展")
-                let req = OSSystemExtensionRequest.activationRequest(
-                    forExtensionWithIdentifier: Self.extensionID, queue: .main)
-                req.delegate = self
-                OSSystemExtensionManager.shared.submitRequest(req)
-                statusText = "正在激活系统扩展…"
-            } else {
-                note("已有 VPN 配置 -> reload")
-                reload()
-            }
-        }
+        reload()
     }
 
     private func stop() {
@@ -191,35 +176,6 @@ final class MergedVPN: NSObject, ObservableObject, OSSystemExtensionRequestDeleg
             // 三个页面的状态文本也跟着刷新一次
             NotificationCenter.default.post(name: .mergedVPNStatusChanged, object: nil)
         }
-    }
-
-    // MARK: - OSSystemExtensionRequestDelegate
-
-    func request(_ request: OSSystemExtensionRequest,
-                 actionForReplacingExtension existing: OSSystemExtensionProperties,
-                 withExtension ext: OSSystemExtensionProperties) -> OSSystemExtensionRequest.ReplacementAction {
-        .replace
-    }
-
-    func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
-        statusText = "等待系统批准扩展…"
-    }
-
-    func request(_ request: OSSystemExtensionRequest,
-                 didFinishWithResult result: OSSystemExtensionRequest.Result) {
-        switch result {
-        case .willCompleteAfterReboot:
-            note("扩展需重启后生效")
-            statusText = "扩展需重启后生效"
-        default:
-            note("扩展激活完成 -> reload")
-            reload()
-        }
-    }
-
-    func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
-        note("扩展激活失败: \(error.localizedDescription)")
-        statusText = "扩展激活失败：\(error.localizedDescription)"
     }
 }
 

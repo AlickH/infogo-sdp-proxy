@@ -14,8 +14,9 @@ import NetworkExtension
 /// 因此 `@unchecked Sendable` 成立（Swift 6 严格并发要求静态单例可发送）。
 final class MergedTunnel: @unchecked Sendable {
     static let shared = MergedTunnel()
-    /// 复用原 SDPNE 的 bundle ID —— 这样不需要新的 App ID / provisioning profile
-    static let extensionID = "com.alick.sdp-proxy.ne"
+    /// 与旧的 SystemExtension（.ne/.wg/.ts）不同的全新 bundle ID，
+    /// 避免和 sysextd 数据库里残留的旧记录撞 ID 导致 app extension 无法注册。
+    static let extensionID = "com.alick.sdp-proxy.tunnel"
 
     private static let featuresKey = "sdp.merged.features"
     private static let configsKey = "sdp.merged.configs"

@@ -74,6 +74,13 @@ protocol TunnelEngine: AnyObject {
     var addresses: [String] { get }
     /// 不进入隧道的路由（如 127.0.0.1/32）
     var excludeRoutes: [String] { get }
+
+    /// 本引擎自己发起外联时要连的目标（`host:port` 或裸 host）。
+    ///
+    /// 这些地址必须被排除出隧道，否则引擎的加密流量会被自己的 utun 吸回去：
+    /// SystemExtension 时代由系统按每条 VPN 的 `serverAddress` 自动排除，
+    /// 合并成一条隧道后系统无从得知，只能由引擎自己报上来。
+    var outboundTargets: [String] { get }
     var dnsServers: [String] { get }
     var dnsMatchDomain: String { get }
     var mtu: Int { get }
@@ -104,6 +111,10 @@ protocol TunnelEngine: AnyObject {
     /// App 侧发来的控制消息（status / login / logout 等）
     func handleMessage(_ message: Data, completion: @escaping (Data?) -> Void)
 
+    /// 周期性状态采样（用于诊断：握手/收发计数）。
+    /// 默认空实现；只有 WG 这种「发出去了但收不到」的引擎需要。
+    func logStatus(_ reason: String)
+
     /// 引擎在运行中发现地址 / 路由变化时调用。
     ///
     /// 目前只有 Tailscale 需要：`start()` 时控制面还没下发地址，只能用占位
@@ -114,5 +125,7 @@ protocol TunnelEngine: AnyObject {
 
 extension TunnelEngine {
     var excludeRoutes: [String] { [] }
+    var outboundTargets: [String] { [] }
     func setNetworkChangeHandler(_ handler: @escaping () -> Void) {}
+    func logStatus(_ reason: String) {}
 }

@@ -7,28 +7,28 @@
 	<key>CFBundleExecutable</key>
 	<string>SDPNE</string>
 	<key>CFBundleIdentifier</key>
-	<string>com.alick.sdp-proxy.ne</string>
+	<string>com.alick.sdp-proxy.tunnel</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>
 	<string>SDP Proxy NE</string>
 	<key>CFBundlePackageType</key>
-	<string>SYSX</string>
+	<string>XPC!</string>
+	<!-- app extension 的版本必须与宿主 App 完全一致（Xcode 会校验，
+	     不一致时 embeddedBinaryValidationUtility 报 warning 且 NE 可能拒绝加载）。
+	     两处都用同一组构建设置，避免以后改版本时漂移。 -->
 	<key>CFBundleShortVersionString</key>
-	<string>1.0.5</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>105</string>
-	<key>NSSystemExtensionUsageDescription</key>
-	<string>SDP 需要该扩展按功能开关接管 SDP 代理、WireGuard 与 Tailscale 流量</string>
-	<key>NetworkExtension</key>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<!-- app extension 的标准入口：系统按 principal class 实例化，
+	     不需要 sysextd 激活，也不会出现在「登录项与扩展」里 -->
+	<key>NSExtension</key>
 	<dict>
-		<key>NEMachServiceName</key>
-		<string>KLU8GF65GP.com.alick.sdp-proxy.ne</string>
-		<key>NEProviderClasses</key>
-		<dict>
-			<key>com.apple.networkextension.packet-tunnel</key>
-			<string>SDPNE.MergedProvider</string>
-		</dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.networkextension.packet-tunnel</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>SDPNE.MergedProvider</string>
 	</dict>
 </dict>
 </plist>

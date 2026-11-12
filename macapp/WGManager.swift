@@ -1,7 +1,6 @@
 import Foundation
 import NetworkExtension
 import CryptoKit
-import SystemExtensions
 import Combine
 
 struct WGConfig: Codable, Equatable, Identifiable {
@@ -227,13 +226,8 @@ final class WGManager: NSObject, ObservableObject, @unchecked Sendable {
 
     func enable() {
         MergedTunnel.shared.set("wg", enabled: true)
-        log("请求安装/激活扩展")
-        NSLog("[WG] 请求安装扩展 %@", Self.extensionID)
-        statusText = "正在安装扩展…"
-        let req = OSSystemExtensionRequest.activationRequest(
-            forExtensionWithIdentifier: Self.extensionID, queue: .main)
-        req.delegate = self
-        OSSystemExtensionManager.shared.submitRequest(req)
+        statusText = "正在配置…"
+        configureAndStart()
     }
 
     func disable() {
@@ -462,28 +456,4 @@ final class WGManager: NSObject, ObservableObject, @unchecked Sendable {
     }
 }
 
-extension WGManager: OSSystemExtensionRequestDelegate {
-    func request(_ request: OSSystemExtensionRequest,
-                 actionForReplacingExtension existing: OSSystemExtensionProperties,
-                 withExtension ext: OSSystemExtensionProperties) -> OSSystemExtensionRequest.ReplacementAction {
-        .replace
-    }
-
-    func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
-        statusText = "等待系统批准扩展…"
-    }
-
-    func request(_ request: OSSystemExtensionRequest,
-                 didFinishWithResult result: OSSystemExtensionRequest.Result) {
-        log("扩展已就绪")
-        statusText = "扩展已安装"
-        configureAndStart()
-    }
-
-    func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
-        log("扩展安装失败: \(error.localizedDescription)")
-        NSLog("[WG] 安装失败: %@", error.localizedDescription)
-        self.error = error.localizedDescription
-        statusText = "扩展安装失败"
-    }
-}
+// 旧 SystemExtension 激活代理已移除：app extension 由系统按需加载

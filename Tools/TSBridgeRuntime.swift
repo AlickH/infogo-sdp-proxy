@@ -249,29 +249,33 @@ final class TSBridgeRuntime: TailscaleRuntime {
         var errorDescription: String? { "TSBridgeRuntime: 配置序列化失败" }
     }
 
-    /// 系统扩展以 root 运行时的固定数据目录。
+    /// 扩展侧的数据目录。
     ///
-    /// 不能用 `containerURL(forSecurityApplicationGroupIdentifier:)`——App Group 容器
-    /// 只对 App 沙盒上下文有效，在系统扩展进程里返回 **nil**，之前退化成
-    /// `NSTemporaryDirectory()`，临时目录被系统清理后节点就掉登录、必须重新授权。
-    /// 这里和 `SharedToken` 一样走机器级固定路径（扩展以 root 运行，可写）。
-    private static let dataDir = URL(fileURLWithPath: "/Library/Application Support/SDPProxy",
-                                     isDirectory: true)
+    /// 载体换成 .appex 后扩展是**沙箱进程**：`/Library/Application Support/...`
+    /// 不再可写，而 App Group 容器对沙箱进程是最合适的落点——宿主 App 与扩展
+    /// 共享同一个容器，登录态不会因为换载体而丢失。
+    /// 同时把旧版本写在 `/Library/Application Support/SDPProxy` 的数据迁移过来。
+    private static var dataDir: URL {
+        let fm = FileManager.default
+        if let container = fm.containerURL(
+            forSecurityApplicationGroupIdentifier: "KLU8GF65GP.com.alick.sdp-proxy") {
+            return container
+        }
+        // 容器不可用（未签名/未授权）时退回临时目录，避免直接崩溃
+        return URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+    }
 
     private static func ensureDataDir() -> URL {
         let fm = FileManager.default
-        if !fm.fileExists(atPath: dataDir.path) {
-            try? fm.createDirectory(at: dataDir, withIntermediateDirectories: true,
-                                    attributes: [.posixPermissions: 0o755])
+        let dir = dataDir
+        if !fm.fileExists(atPath: dir.path) {
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
         }
-        // 目录可能由旧版本以 0700 建出来，这里每次都纠正一次，
-        // 保证诊断日志可读；含私钥的 tsnet/ 子目录仍单独收紧到 0700。
-        try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dataDir.path)
-        return dataDir
+        return dir
     }
 
-    /// 诊断日志：系统扩展里的 NSLog 在统一日志里看不到（被 NE 过滤），
-    /// 所以把关键状态追加写进固定目录，方便从 shell 直接查看。
+    /// 诊断日志：扩展里的 NSLog 在统一日志里看不到（被 NE 过滤），
+    /// 所以把关键状态追加写进数据目录，方便从 shell 直接查看。
     static func diag(_ msg: String) {
         let url = ensureDataDir().appendingPathComponent("ts-diag.log")
         let line = ISO8601DateFormatter().string(from: Date()) + "  " + msg + "\n"

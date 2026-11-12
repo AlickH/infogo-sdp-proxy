@@ -19,6 +19,12 @@ final class TSEngine: TunnelEngine {
     private(set) var dnsMatchDomain = ""
     private(set) var mtu = 1280
 
+    /// Tailscale 的外联目标：controlplane + DERP 中继。
+    /// 这些是扩展自己发起的连接，必须排除出隧道，否则永远握不上手。
+    /// DERP 服务器是运行时由控制面下发的，这里只能排除已知的 control URL；
+    /// 运行中新出现的 DERP 地址由 `TSBridgeRuntime` 走它自己的出口（不受本隧道影响）。
+    private(set) var outboundTargets: [String] = []
+
     private let runtime: TSBridgeRuntime
     private var outbound: ((Data) -> Void)?
     private var networkChange: (() -> Void)?
@@ -34,8 +40,7 @@ final class TSEngine: TunnelEngine {
         { [weak self] _, done in
             guard let self = self else { done(nil); return }
             self.prepare(config: self.lastConfig)
-            NSLog("[TS-Engine] 地址变更 -> 重新规划 addresses=%@ routes=%@",
-                  self.addresses.joined(separator: ","), self.routes.joined(separator: ","))
+            Diag.log("ts", "地址变更 -> 重新规划 addresses=\(self.addresses.joined(separator: ",")) routes=\(self.routes.joined(separator: ","))")
             self.networkChange?()
             done(nil)
         }
@@ -61,6 +66,12 @@ final class TSEngine: TunnelEngine {
         addresses = ips.isEmpty ? ["100.64.0.254/32"] : ips.map { $0 + "/32" }
         dnsServers = acceptDNS ? ["100.100.100.100"] : []
         dnsMatchDomain = (status["tailnet"] as? String) ?? ""
+        if let control = config["controlURL"] as? String, !control.isEmpty,
+           let host = URL(string: control)?.host {
+            outboundTargets = [host + ":443"]
+        } else {
+            outboundTargets = []
+        }
         if let m = config["mtu"] as? Int, m >= 576 { mtu = m }
     }
 

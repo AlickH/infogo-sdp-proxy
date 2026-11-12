@@ -16,6 +16,9 @@ final class WGEngine: TunnelEngine {
     let dnsMatchDomain = ""
     private(set) var mtu = 1280
 
+    /// WG 的 endpoint（加密 UDP 的收发对端）必须排除出隧道
+    private(set) var outboundTargets: [String] = []
+
     private var outbound: ((Data) -> Void)?
     private let lock = NSLock()
     private var _stopped = false
@@ -30,6 +33,8 @@ final class WGEngine: TunnelEngine {
         addresses = (config["addresses"] as? [String]) ?? []
         dnsServers = (config["dns"] as? [String]) ?? []
         if let m = config["mtu"] as? Int, m >= 576 { mtu = m }
+        let ep = (config["endpoint"] as? String) ?? ""
+        outboundTargets = ep.isEmpty ? [] : [ep]
     }
 
     func start(config: [String: Any], completion: @escaping (Error?) -> Void) {
@@ -70,14 +75,33 @@ final class WGEngine: TunnelEngine {
                 self.outbound?(bytes)
             }
         }
+        Diag.log("wg", "started endpoint=\(endpoint) allowed=\(allowed.count) keepalive=\(keepalive)")
         completion(nil)
+    }
+
+    /// 把 wireguard-go 的运行时配置（UAPI）里的关键指标打进诊断日志。
+    /// `last_handshake_time_sec=0` 说明握手从未成功；`rx_bytes` 一直是 0
+    /// 说明对端的加密包一个都没收到（多半是 endpoint 的出向/回向被路由劫走）。
+    func logStatus(_ reason: String) {
+        let uapi = TsbridgeWgStatus()
+        guard !uapi.isEmpty else {
+            Diag.log("wg", "status(\(reason)) 设备未启动")
+            return
+        }
+        var fields: [String] = []
+        for line in uapi.split(separator: "\n") {
+            for key in ["last_handshake_time_sec", "rx_bytes", "tx_bytes", "endpoint"] {
+                if line.hasPrefix(key + "=") { fields.append(String(line)) }
+            }
+        }
+        Diag.log("wg", "status(\(reason)) " + fields.joined(separator: " "))
     }
 
     func stop() {
         stopped = true
         var err: NSError?
         if !TsbridgeWgStop(&err) {
-            NSLog("[WG-Engine] stop 失败: %@", err?.localizedDescription ?? "unknown")
+            Diag.log("wg", "stop 失败: \(err?.localizedDescription ?? "unknown")")
         }
     }
 

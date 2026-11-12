@@ -27,6 +27,11 @@ final class SDPEngine: TunnelEngine, @unchecked Sendable {
     private var gateways: [String] = []
     private var serverName = ""
     private var directDomains: [String] = []
+
+    /// 网关就是我们自己的外联目标，必须排除出隧道
+    var outboundTargets: [String] {
+        gateways.map { $0 }
+    }
     private var store = RuleStore()
 
     private var hevFD: Int32 = -1
@@ -37,18 +42,7 @@ final class SDPEngine: TunnelEngine, @unchecked Sendable {
     private var outbound: ((Data) -> Void)?
 
     private func log(_ s: String) {
-        NSLog("[SDP-Engine] %@", s)
-        let line = "\(Date()) \(s)\n"
-        let path = "/tmp/sdpne.log"
-        let fm = FileManager.default
-        if let n = (try? fm.attributesOfItem(atPath: path))?[.size] as? Int, n > 2 * 1024 * 1024 {
-            try? fm.removeItem(atPath: path)
-        }
-        if let h = FileHandle(forWritingAtPath: path) {
-            h.seekToEndOfFile(); h.write(Data(line.utf8)); h.closeFile()
-        } else {
-            try? Data(line.utf8).write(to: URL(fileURLWithPath: path))
-        }
+        Diag.log("sdp", s)
     }
 
     /// 配置值可能是 String / NSNumber（JSON 策略表里的 resid、ports 是数字），
@@ -338,13 +332,29 @@ final class SDPEngine: TunnelEngine, @unchecked Sendable {
         await to.closeWrite()
     }
 
+    /// 从 HTTP 请求里取目标主机名。
+    ///
+    /// `Host` 头通常带端口（`Host: 172.30.193.1:30080`），必须剥掉——否则
+    /// 调用方再拼一次端口会得到 `172.30.193.1:30080:30080`，规则表按这个
+    /// 畸形主机名永远匹配不到（表现为 `no route ... resid=`，连接被丢弃）。
     static func parseHTTPHost(_ data: Data) -> String? {
         guard data.count > 16 else { return nil }
         let text = String(decoding: data.prefix(4096), as: UTF8.self)
         for line in text.split(separator: "\r\n") {
-            if line.lowercased().hasPrefix("host:") {
-                return line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            guard line.lowercased().hasPrefix("host:") else { continue }
+            let value = line.dropFirst(5).trimmingCharacters(in: .whitespaces)
+            guard !value.isEmpty else { return nil }
+            // IPv6 字面量形如 [::1]:8080，端口分隔在 "]" 之后
+            if value.hasPrefix("[") {
+                if let close = value.firstIndex(of: "]") {
+                    return String(value[value.index(after: value.startIndex)..<close])
+                }
+                return value
             }
+            if let colon = value.lastIndex(of: ":") {
+                return String(value[..<colon])
+            }
+            return value
         }
         return nil
     }

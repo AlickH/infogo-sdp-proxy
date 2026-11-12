@@ -19,7 +19,15 @@ echo "== 前置检查 =="
 command -v asc >/dev/null 2>&1 || { echo "asc 未安装"; exit 1; }
 asc auth status >/dev/null 2>&1 || { echo "asc 未认证，请先 asc auth login"; exit 1; }
 [ -d "$APP" ] || { echo "产物不存在: ${APP}（先跑 scripts/build-xcode.sh）" >&2; exit 1; }
-[ -d "$APP/Contents/Library/SystemExtensions" ] || { echo "缺少系统扩展目录: $APP" >&2; exit 1; }
+# 两种载体都接受：旧的系统扩展（Contents/Library/SystemExtensions/*.systemextension）
+# 或新的 app extension（Contents/PlugIns/*.appex）。两者缺一则说明构建形态不对。
+has_sysext=$(find "$APP/Contents/Library/SystemExtensions" -name "*.systemextension" 2>/dev/null | head -1)
+has_appex=$(find "$APP/Contents/PlugIns" -name "*.appex" 2>/dev/null | head -1)
+if [ -z "$has_sysext" ] && [ -z "$has_appex" ]; then
+  echo "既无系统扩展也无 app extension：构建形态不对" >&2
+  exit 1
+fi
+echo "   扩展载体：$( [ -n "$has_appex" ] && echo "app extension ($(basename "$has_appex"))" || echo "system extension ($(basename "$has_sysext"))" )"
 
 echo "== 签名校验（公证要求 hardened runtime + 安全时间戳） =="
 codesign --verify --deep --strict --verbose=2 "$APP"

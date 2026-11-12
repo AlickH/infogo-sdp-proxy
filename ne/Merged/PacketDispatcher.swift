@@ -21,6 +21,13 @@ final class PacketDispatcher {
     /// 未按任何前缀命中时的兜底引擎（目前是 SDP 的规则兜底）
     private var fallback: TunnelEngine?
 
+    /// 额外排除出隧道的网段。
+    ///
+    /// 由 `MergedProvider` 注入：三个引擎自己外联目标的解析结果（SDP 网关、
+    /// WG endpoint、TS controlplane）。这些流量由扩展进程自己发起，必须走
+    /// 物理网卡，否则会被自己的 utun 吸回去、永远收不到回包。
+    private var extraExcludes: [String] = []
+
     /// 诊断计数，便于在 App 侧确认包确实流经了分类器
     private(set) var inboundCount: UInt64 = 0
     private(set) var outboundCount: UInt64 = 0
@@ -45,6 +52,12 @@ final class PacketDispatcher {
         self.table = entries
     }
 
+    /// 注入引擎外联目标的排除网段（必须在 buildSettings() 之前调用）
+    func setExtraExcludes(_ cidrs: [String]) {
+        lock.lock(); defer { lock.unlock() }
+        extraExcludes = cidrs
+    }
+
     /// 把所有启用引擎的路由/地址/DNS 合并成一份网络设置。
     func buildSettings(tunnelRemoteAddress: String = "127.0.0.1") -> NEPacketTunnelNetworkSettings {
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: tunnelRemoteAddress)
@@ -62,8 +75,14 @@ final class PacketDispatcher {
                 }
             }
             ipv4.includedRoutes = routes
-            let excludes = list.flatMap(\.excludeRoutes).compactMap { cidr -> NEIPv4Route? in
+            let declared = list.flatMap(\.excludeRoutes)
+            let merged = declared + lock.withLock { extraExcludes }
+            let excludes = merged.compactMap { cidr -> NEIPv4Route? in
                 guard !cidr.contains(":"), let pfx = IPPrefix(cidr: cidr) else { return nil }
+                // 回环地址永远不进 utun，把它作为 route 目的地会被 NE 判为非法：
+                // "IPv4 routes are invalid: IPv4Route Destination address is loopback"，
+                // 整份网络设置会被丢弃（隧道显示已连接但一个包都不走）。
+                guard pfx.address != IPPrefix.parseIP("127.0.0.1") else { return nil }
                 let bits = pfx.mask.byteSwapped
                 let mask = "\((bits >> 24) & 255).\((bits >> 16) & 255).\((bits >> 8) & 255).\(bits & 255)"
                 return NEIPv4Route(destinationAddress: cidrHost(cidr), subnetMask: mask)

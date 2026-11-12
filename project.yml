@@ -1,16 +1,18 @@
 # Xcode 工程定义（由 xcodegen 生成 SDP.xcodeproj）
-# 主 App: SDP  (SwiftUI 菜单栏代理) + 3 个内嵌系统扩展: SDPNE / WGNE / TSNE
+# 主 App: SDP (SwiftUI 菜单栏代理) + 1 个内嵌 NetworkExtension app extension (SDPNE)
 #
 # 注意：各 target 的 Info.plist 一律「手写并由 INFOPLIST_FILE 指定」，
 # 刻意不使用 xcodegen 的 `info:` 块——它会重写 plist 文件，
-# 把系统扩展必需的 NetworkExtension / NEProviderClasses 键覆盖掉。
+# 把 NetworkExtension 必需的 NSExtension / NEProviderClasses 键覆盖掉。
 name: SDP
 options:
   bundleIdPrefix: com.alick.sdp-proxy
   createIntermediateGroups: true
   deploymentTarget:
     macOS: "13.0"
-  # 系统扩展需要 Developer ID 签名；默认 Manual + 团队号，构建时由 Xcode 选证书/Profile
+  # app extension 形态：用 Automatic 签名，让 Xcode 自动挑/生成带
+  # packet-tunnel-provider 能力的 Developer ID profile（手动指定旧 profile
+  # 只授权 -systemextension 变体，会把这个 entitlement 在签名时剥掉）。
   setPerTargetBuildVariables: false
 
 settings:
@@ -21,10 +23,18 @@ settings:
     SWIFT_STRICT_CONCURRENCY: minimal
     MACOSX_DEPLOYMENT_TARGET: "13.0"
     DEVELOPMENT_TEAM: KLU8GF65GP
-    CODE_SIGN_STYLE: Manual
-    CODE_SIGN_IDENTITY: "Developer ID Application"
+    CODE_SIGN_STYLE: Automatic
+    # 第三方静态库（hev / lwip / yaml）只有 arm64 切片，且目标机器均为 Apple Silicon，
+    # 故只打 arm64；打通用二进制会在 x86_64 链接阶段因缺切片失败。
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: "YES"
     ENABLE_HARDENED_RUNTIME: "YES"
     COMBINE_HIDPI_IMAGES: "YES"
+    # 版本号的唯一来源：宿主 App 与 app extension 的 Info.plist 都引用这两个变量。
+    # app extension 的 CFBundleVersion 必须与宿主 App 完全一致，否则
+    # embeddedBinaryValidationUtility 会告警、且 NE 可能拒绝加载该扩展。
+    MARKETING_VERSION: "2.0.0"
+    CURRENT_PROJECT_VERSION: "200"
     LD_RUNPATH_SEARCH_PATHS: ["$(inherited)", "@executable_path/../Frameworks"]
     # 公证要求：签名必须带「安全时间戳」，否则 notarytool 直接拒绝
     # （报 "The signature does not include a secure timestamp"）。
@@ -58,7 +68,6 @@ targets:
         PRODUCT_NAME: SDP
         INFOPLIST_FILE: assets/SDP-Info.plist
         CODE_SIGN_ENTITLEMENTS: macapp/SDP.entitlements
-        PROVISIONING_PROFILE_SPECIFIER: "SDP Proxy macOS Developer ID v4"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ENABLE_HARDENED_RUNTIME: "YES"
         OTHER_LDFLAGS:
@@ -69,21 +78,22 @@ targets:
           - "-framework Security"
           - "-framework CryptoKit"
           - "-framework NetworkExtension"
-          - "-framework SystemExtensions"
-    # 合并后只有一个系统扩展：三个功能由 providerConfiguration["features"] 控制
+    # 合并后只有一个 tunnel provider：三个功能由 providerConfiguration["features"] 控制。
+    # 用普通 app extension（.appex）而不是 SystemExtension —— 后者会在
+    # 「系统设置 > 登录项与扩展」按 bundle ID 永久留一个开关，还要求用户批准/重启。
     dependencies:
       - target: SDPNE
-    embeddedSystemExtensions:
-      - SDPNE
+        embed: true
 
   # ---------------------------------------------------------------------------
-  # SDPNE: 透明代理系统扩展（基于 hev 静态库）
+  # SDPNE: 透明代理 NetworkExtension app extension（基于 hev 静态库）
   # ---------------------------------------------------------------------------
   SDPNE:
-    type: system-extension
+    type: app-extension
     platform: macOS
     sources:
-      - path: ne/main.swift
+      # app extension 由系统按 NSExtensionPrincipalClass 实例化，
+      # 不需要 ne/main.swift 里的 NEProvider.startSystemExtensionMode()。
       - path: ne/bridge.h
       - path: Tools/TSBridgeRuntime.swift
       # Tailscale 引擎的桥接契约（TailscaleRuntime / TSTunnelSettings / 消息路由）
@@ -99,17 +109,13 @@ targets:
       - path: macapp/Core/Config.swift
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.alick.sdp-proxy.ne
-        # 关键：系统扩展的 wrapper 目录名必须等于 bundle ID（<bundle-id>.systemextension），
-        # 否则 sysextd 扫不到它，会报 "Extension not found in App bundle"。
-        # 用 PRODUCT_NAME 控制 wrapper 名，EXECUTABLE_NAME / PRODUCT_MODULE_NAME
-        # 保持原名，这样 CFBundleExecutable 和 NEProviderClasses 里的模块名都不变。
-        PRODUCT_NAME: com.alick.sdp-proxy.ne
+        PRODUCT_BUNDLE_IDENTIFIER: com.alick.sdp-proxy.tunnel
+        # app extension 的 wrapper 是 Contents/PlugIns/SDPNE.appex
+        PRODUCT_NAME: SDPNE
         EXECUTABLE_NAME: SDPNE
         PRODUCT_MODULE_NAME: SDPNE
         INFOPLIST_FILE: ne/Info.plist
         CODE_SIGN_ENTITLEMENTS: ne/SDPNE.entitlements
-        PROVISIONING_PROFILE_SPECIFIER: "SDP Proxy NE Developer ID v2"
         SWIFT_OBJC_BRIDGING_HEADER: ne/bridge.h
         HEADER_SEARCH_PATHS: ["ne", "third_party/hev/lib"]
         LIBRARY_SEARCH_PATHS: ["third_party/hev/lib"]

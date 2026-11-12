@@ -1,9 +1,8 @@
 import Foundation
 import NetworkExtension
-import SystemExtensions
 import Combine
 
-/// 系统扩展（透明代理）管理：安装 → 配置 → 启动
+/// 透明代理配置管理（app extension 形态：不需要激活系统扩展）
 /// `@unchecked Sendable`：NE 的 @Sendable 回调需要捕获 self；本类状态仅在主队列读写。
 final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
     static let extensionID = MergedTunnel.extensionID
@@ -39,11 +38,8 @@ final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
     func enable(config: [String: Any]) {
         self.pendingConfig = config
         MergedTunnel.shared.set("sdp", enabled: true, config: config)
-        statusText = "正在安装扩展…"
-        let req = OSSystemExtensionRequest.activationRequest(
-            forExtensionWithIdentifier: Self.extensionID, queue: .main)
-        req.delegate = self
-        OSSystemExtensionManager.shared.submitRequest(req)
+        statusText = "正在配置…"
+        configureAndStart()
     }
 
     func disable() {
@@ -215,33 +211,4 @@ final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
     }
 }
 
-extension NEManager: OSSystemExtensionRequestDelegate {
-    func request(_ request: OSSystemExtensionRequest,
-                 actionForReplacingExtension existing: OSSystemExtensionProperties,
-                 withExtension ext: OSSystemExtensionProperties) -> OSSystemExtensionRequest.ReplacementAction {
-        .replace
-    }
-
-    func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
-        statusText = "等待系统批准扩展…"
-    }
-
-    func request(_ request: OSSystemExtensionRequest,
-                 didFinishWithResult result: OSSystemExtensionRequest.Result) {
-        switch result {
-        case .completed:
-            statusText = "扩展已安装"
-            configureAndStart()
-        case .willCompleteAfterReboot:
-            statusText = "需要重启后生效"
-        @unknown default:
-            statusText = "扩展安装完成"
-            configureAndStart()
-        }
-    }
-
-    func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
-        lastError = error.localizedDescription
-        statusText = "扩展安装失败"
-    }
-}
+// 旧 SystemExtension 激活代理已移除：app extension 由系统按需加载

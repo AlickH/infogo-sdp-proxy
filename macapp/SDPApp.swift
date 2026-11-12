@@ -429,7 +429,6 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     func loginTS() { ts.login() }
     func reloginTS() { ts.relogin() }
     func relocateTS() { ts.relocateToApplications() }
-    func resetTSRecords() { ts.resetExtensionRecords() }
     func activateTSExtension() { ts.enable() }
     func activateWGExtension() { wg.enable() }
 
@@ -557,12 +556,6 @@ final class SDPAppDelegate: NSObject, NSApplicationDelegate {
         if args.contains("--merged-setup") {
             MergedTunnel.cleanupLegacyConfigs {
                 AppModel.shared?.setupMergedAllFeatures()
-            }
-            return
-        }
-        if args.contains("--ts-reset-ext") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                AppModel.shared?.resetTSRecords()
             }
             return
         }
