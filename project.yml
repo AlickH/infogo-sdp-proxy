@@ -89,6 +89,8 @@ targets:
       - path: ne/main.swift
       - path: ne/Provider.swift
       - path: ne/bridge.h
+      # 合并用的分类器/引擎协议，先挂在这里参与编译验证，暂不接入运行时
+      - path: ne/Merged
       - path: macapp/Core/RuleStore.swift
       - path: macapp/Core/RuleText.swift
       - path: macapp/Core/Streams.swift
