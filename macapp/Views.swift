@@ -92,8 +92,11 @@ struct MenuBarContent: View {
                             if model.tsLoginURL.isEmpty { model.loginTS() } else { model.openTSLogin() }
                         }
                     }
-                    iconButton("plus", help: "新建配置", visible: true) {
-                        model.newTSConfigDraft()
+                    // 配置项极少（多数默认值即可用），不再做「多配置列表」，
+                    // 收成一个「高级设置」入口，只保留网页控制台改不了的本地项。
+                    iconButton("gearshape", help: "高级设置", visible: true) {
+                        if let id = model.tsActiveID { model.editTSDraft(id) }
+                        else { model.newTSConfigDraft() }
                         showTSSheet = true
                     }
                 }
@@ -489,20 +492,6 @@ struct MenuBarContent: View {
                 ScrollView {
                     VStack(spacing: 1) {
                         ForEach(model.tsPeers) { p in tsPeerRow(p) }
-                    }
-                }
-                .frame(maxHeight: 88)
-            }
-
-            if model.tsConfigs.isEmpty {
-                Text("暂无配置，点右上角 + 新建")
-                    .font(.system(size: 10))
-                    .foregroundColor(.secondary)
-                    .padding(.vertical, 6)
-            } else {
-                ScrollView {
-                    VStack(spacing: 2) {
-                        ForEach(model.tsConfigs) { c in tsConfigRow(c) }
                     }
                 }
                 .frame(maxHeight: 88)
@@ -906,24 +895,26 @@ struct TSEditSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Tailscale 配置").font(.system(size: 13, weight: .semibold))
-            field("显示名称", $draft.name, placeholder: "列表里展示的名字")
+            Text("Tailscale 高级设置").font(.system(size: 13, weight: .semibold))
+            Text("以下都是网页控制台改不了的本地项。设备名、MagicDNS 总开关、路由审批请到 tailscale.com/admin 操作。")
+                .font(.system(size: 9))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             field("Control URL", $draft.controlURL, placeholder: "https://controlplane.tailscale.com")
             field("Auth Key", $draft.authKey, placeholder: "留空则交互式登录（tskey-...）")
-            field("设备名", $draft.hostname, placeholder: "留空使用本机名")
             field("捕获路由", $draft.routes, placeholder: "100.64.0.0/10")
-            field("广播子网", $draft.advertiseRoutes, placeholder: "10.0.0.0/24, 192.168.1.0/24")
-            field("Exit Node", $draft.exitNode, placeholder: "节点名或 IP，可留空")
             field("MTU", $draft.mtu, placeholder: "1280")
             Group {
                 Toggle("使用 MagicDNS", isOn: $draft.acceptDNS)
-                Toggle("接受子网路由", isOn: $draft.acceptRoutes)
-                Toggle("Shield incoming connections", isOn: $draft.shieldIncoming)
                 Toggle("按需连接（On-Demand，Ethernet / Wi-Fi 自动连接）", isOn: $draft.onDemand)
             }
             .toggleStyle(.checkbox)
             .font(.system(size: 10))
             Text("Control URL 可指向自建 Headscale；Auth Key 留空时，连接后需在浏览器完成 SSO 登录。")
+                .font(.system(size: 9))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("广播子网 / Exit Node / Shield incoming 暂不支持——底层 tsnet 引擎没有这些能力，需换用完整 tailscaled 才能实现。")
                 .font(.system(size: 9))
                 .foregroundColor(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

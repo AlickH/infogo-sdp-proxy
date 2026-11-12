@@ -19,14 +19,17 @@ struct TSConfig: Codable, Equatable, Identifiable {
     var hostname = ""
     /// 隧道捕获的网段（Tailscale 默认 CGNAT 段，与 SDP 的 10.240.0.0/12、WG 的 10.0.0.0/24 不冲突）
     var routes = "100.64.0.0/10"
-    /// 本机向 tailnet 广播的子网路由（逗号分隔 CIDR）
-    var advertiseRoutes = ""
-    var exitNode = ""
     var acceptDNS = true
-    var acceptRoutes = true
-    var shieldIncoming = false
     var mtu = "1280"
     var onDemand = false
+
+    // 以下三项底层 tsnet 引擎不支持，保留字段只为兼容旧配置文件的反序列化，
+    // 界面上已不再展示：advertiseRoutes（广播子网）、exitNode、shieldIncoming。
+    // acceptRoutes 也无意义——tsnet 会自动接受对端广播的子网路由。
+    var advertiseRoutes = ""
+    var exitNode = ""
+    var acceptRoutes = true
+    var shieldIncoming = false
 
     init() {}
 
@@ -590,16 +593,16 @@ final class TSManager: NSObject, ObservableObject, @unchecked Sendable {
             let proto = NETunnelProviderProtocol()
             proto.providerBundleIdentifier = Self.extensionID
             proto.serverAddress = URL(string: cfg.controlURL)?.host ?? cfg.controlURL
+            // 只传扩展真正会读的键。
+            // advertiseRoutes / exitNode / acceptRoutes / shieldIncoming 底层 tsnet
+            // 引擎没有对应能力（tsnet.Server 无 AdvertiseRoutes、无 RouteAll），
+            // 传过去也无人消费，已从界面移除。
             var providerConfig: [String: Any] = [
                 "controlURL": cfg.controlURL,
                 "authKey": cfg.authKey,
                 "hostname": cfg.hostname,
                 "routes": self.splitList(cfg.routes),
-                "advertiseRoutes": self.splitList(cfg.advertiseRoutes),
-                "exitNode": cfg.exitNode,
                 "acceptDNS": cfg.acceptDNS,
-                "acceptRoutes": cfg.acceptRoutes,
-                "shieldIncoming": cfg.shieldIncoming,
             ]
             if let mtu = Int(cfg.mtu), mtu >= 576 { providerConfig["mtu"] = mtu }
             proto.providerConfiguration = providerConfig
