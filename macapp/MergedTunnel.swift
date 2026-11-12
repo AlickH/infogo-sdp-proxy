@@ -53,6 +53,10 @@ final class MergedTunnel: @unchecked Sendable {
         return _features
     }
 
+    /// UI 开关的唯一真相：合并后三个 Manager 共用一条 VPN，
+    /// 不能拿「隧道已连接」当成「本功能已启用」。
+    func isEnabled(_ name: String) -> Bool { features.contains(name) }
+
     var isEmpty: Bool { features.isEmpty }
 
     /// 生成扩展侧 MergedProvider 需要的配置

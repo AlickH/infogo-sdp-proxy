@@ -9,6 +9,7 @@ struct MenuBarContent: View {
         VStack(alignment: .leading, spacing: 0) {
             tabBar.padding(.bottom, 10)
             header.padding(.bottom, 10)
+            vpnSwitch
             Divider()
             currentTab
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -635,34 +636,66 @@ struct MenuBarContent: View {
         .onTapGesture { model.selectTS(c.id) }
     }
 
-    // MARK: - 底部开关（固定面板底部）
+    // MARK: - VPN 总开关（所有页面共用，唯一控制连接/断开）
+
+    @ViewBuilder
+    private var vpnSwitch: some View {
+        HStack(spacing: 8) {
+            Image(systemName: model.vpnConnected ? "network" : "network.slash")
+                .font(.system(size: 13))
+                .foregroundColor(model.vpnConnected ? .green : .secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("VPN 连接").font(.system(size: 12, weight: .medium))
+                Text(model.vpnWanted
+                     ? model.vpnStatus
+                     : "已断开 · 下方开关只决定各功能是否参与")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+            }
+            Spacer()
+            Toggle("", isOn: Binding(
+                get: { model.vpnWanted },
+                set: { _ in model.toggleVPN() }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
+        }
+        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .background(model.vpnConnected
+                    ? Color.green.opacity(0.08)
+                    : Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.bottom, 8)
+    }
+
+    // MARK: - 底部开关（只控制本功能是否参与隧道）
 
     @ViewBuilder
     private var footerSwitch: some View {
         switch model.tab {
         case .sdp:
-            if model.state == "connected" {
-                Divider().padding(.top, 10)
-                HStack(spacing: 6) {
-                    Text("全局接管").font(.system(size: 11))
-                    Text(model.neActive ? "所有内网流量经 SDP 隧道" : "通过 SOCKS5 代理访问内网")
-                        .font(.system(size: 10))
-                        .foregroundColor(.secondary)
-                    Spacer()
-                    Toggle("", isOn: Binding(
-                        get: { model.neActive },
-                        set: { _ in model.toggleNE() }
-                    ))
-                    .labelsHidden()
-                    .toggleStyle(.switch)
-                    .controlSize(.small)
-                }
-                .padding(.top, 10)
+            Divider().padding(.top, 10)
+            HStack(spacing: 6) {
+                Text("启用 SDP 功能").font(.system(size: 11))
+                Text(model.neActive ? "参与这条隧道" : "不参与这条隧道")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Spacer()
+                Toggle("", isOn: Binding(
+                    get: { model.neActive },
+                    set: { _ in model.toggleNE() }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
             }
+            .padding(.top, 10)
         case .wireguard:
             Divider().padding(.top, 10)
             HStack(spacing: 6) {
-                Text("连接").font(.system(size: 11))
+                Text("启用 WireGuard").font(.system(size: 11))
                 Spacer()
                 Toggle("", isOn: Binding(
                     get: { model.wgActive },
@@ -677,8 +710,8 @@ struct MenuBarContent: View {
         case .tailscale:
             Divider().padding(.top, 10)
             HStack(spacing: 6) {
-                Text("连接").font(.system(size: 11))
-                Text(model.tsActive ? "100.64.0.0/10" : "Tailscale mesh")
+                Text("启用 Tailscale").font(.system(size: 11))
+                Text(model.tsActive ? "100.64.0.0/10" : "不参与这条隧道")
                     .font(.system(size: 10))
                     .foregroundColor(.secondary)
                 Spacer()

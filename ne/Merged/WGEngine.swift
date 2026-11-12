@@ -83,9 +83,19 @@ final class WGEngine: TunnelEngine {
 
     func deliver(_ packet: Data) {
         var err: NSError?
-        if !TsbridgeWgDeliverInboundPacket(packet, &err) {
-            NSLog("[WG-Engine] inbound 丢包: %@", err?.localizedDescription ?? "closed")
+        let ok = TsbridgeWgDeliverInboundPacket(packet, &err)
+        let seq = bumpDeliver()
+        if seq <= 12 || seq % 200 == 0 {
+            Diag.log("wg", "deliver #\(seq) \(packet.count)B \(ok ? "ok" : "FAIL \(err?.localizedDescription ?? "")")")
         }
+    }
+
+    private let seqLock = NSLock()
+    private var deliverSeq = 0
+    private func bumpDeliver() -> Int {
+        seqLock.lock(); defer { seqLock.unlock() }
+        deliverSeq += 1
+        return deliverSeq
     }
 
     func onOutbound(_ handler: @escaping (Data) -> Void) { outbound = handler }

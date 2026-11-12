@@ -93,9 +93,14 @@ final class PacketDispatcher {
         guard !list.isEmpty else { completion(MergedError.noEngine); return }
 
         for engine in list {
+            let name = engine.name
             engine.onOutbound { [weak self] packet in
                 guard let self = self else { return }
                 self.counters.async(flags: .barrier) { self.outboundCount += 1 }
+                let seq = self.bumpOutbound()
+                if seq <= 12 || seq % 200 == 0 {
+                    Diag.log("outbound", "#\(seq) \(name) \(packet.count)B -> flow")
+                }
                 let version = (packet.first ?? 0) >> 4
                 let af: NSNumber = version == 6 ? 30 : 2
                 self.flow.writePackets([packet], withProtocols: [af])
@@ -157,10 +162,30 @@ final class PacketDispatcher {
                 guard let dst = IPPrefix.destination(of: packet) else { continue }
                 let entries = self.lock.withLock { self.table }
                 let engine = entries.first(where: { $0.0.contains(dst) })?.1 ?? self.fallback
+                let seq = self.bumpInbound()
+                if seq <= 12 || seq % 200 == 0 {
+                    let src = IPPrefix.source(of: packet).map(IPPrefix.string) ?? "?"
+                    Diag.log("pump", "#\(seq) \(src) -> \(IPPrefix.string(dst)) \(packet.count)B -> \(engine?.name ?? "无引擎,丢弃")")
+                }
                 engine?.deliver(packet)
             }
             self.pump()
         }
+    }
+
+    private var inboundSeq: UInt64 = 0
+    private var outboundSeq: UInt64 = 0
+
+    private func bumpInbound() -> UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        inboundSeq += 1
+        return inboundSeq
+    }
+
+    private func bumpOutbound() -> UInt64 {
+        lock.lock(); defer { lock.unlock() }
+        outboundSeq += 1
+        return outboundSeq
     }
 
     // MARK: - 工具

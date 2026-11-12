@@ -345,19 +345,21 @@ final class WGManager: NSObject, ObservableObject, @unchecked Sendable {
                 return
             }
             self.manager = mgr
+            // 共享隧道连着不代表 WireGuard 功能开着；以 features 为准。
+            let on = MergedTunnel.shared.isEnabled("wg")
             switch mgr.connection.status {
             case .connected:
-                if !self.active {
+                if on && !self.active {
                     self.log("隧道已连接")
                     self.lastRuntimeLine = ""
                     self.lastHandshake = 0
                 }
-                self.statusText = "已连接"
-                self.active = true
-                self.startPolling()
+                self.statusText = on ? "已连接" : "未启用（WireGuard 功能已关闭）"
+                self.active = on
+                if on { self.startPolling() } else { self.stopPolling() }
             case .connecting, .reasserting:
                 self.statusText = "正在连接…"
-                self.active = true
+                self.active = on
             case .disconnecting:
                 self.statusText = "正在断开…"
                 self.active = false
@@ -428,6 +430,8 @@ final class WGManager: NSObject, ObservableObject, @unchecked Sendable {
                         self.statusText = "配置重载失败"
                         return
                     }
+                    // 总开关关着时这里只保存配置，不许偷偷把隧道拉起来
+                    guard MergedVPN.shared.wanted else { self.refresh(); return }
                     if mgr.connection.status == .connected || mgr.connection.status == .connecting {
                         mgr.connection.stopVPNTunnel()
                         // Swift 6：manager 非 Sendable，显式放行跨闭包传递

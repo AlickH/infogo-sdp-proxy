@@ -101,6 +101,12 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     @Published var tsNeedsRelocation = false
 
     @Published var tab: PanelTab = .sdp
+
+    // VPN 总开关：与三个功能开关完全解耦
+    @Published var vpnWanted = MergedVPN.shared.wanted
+    @Published var vpnConnected = false
+    @Published var vpnStatus = "未连接"
+
     private let server: ProxyServer
     private var cancellables = Set<AnyCancellable>()
 
@@ -126,7 +132,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     self.neStatus = self.ne.statusText
-                    self.neActive = self.ne.active
+                    self.neActive = MergedTunnel.shared.isEnabled("sdp")
                     if !self.ne.lastError.isEmpty { self.lastError = self.ne.lastError }
                     self.engine.log("[NE] \(self.ne.statusText)\(self.ne.lastError.isEmpty ? "" : " err=\(self.ne.lastError)")")
                 }
@@ -139,7 +145,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     self.wgStatus = self.wg.statusText
-                    self.wgActive = self.wg.active
+                    self.wgActive = MergedTunnel.shared.isEnabled("wg")
                     self.wgError = self.wg.error
                     self.wgConfigs = self.wg.configs
                     self.wgActiveID = self.wg.activeID
@@ -154,7 +160,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
                 DispatchQueue.main.async {
                     guard let self = self else { return }
                     self.tsStatus = self.ts.statusText
-                    self.tsActive = self.ts.active
+                    self.tsActive = MergedTunnel.shared.isEnabled("ts")
                     self.tsError = self.ts.error
                     self.tsConfigs = self.ts.configs
                     self.tsActiveID = self.ts.activeID
@@ -166,6 +172,18 @@ final class AppModel: ObservableObject, @unchecked Sendable {
                     self.tsPeers = self.ts.peers
                     self.tsTrafficText = self.ts.trafficText
                     self.tsNeedsRelocation = self.ts.needsRelocation
+                }
+            }
+            .store(in: &cancellables)
+
+        MergedVPN.shared.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    self.vpnWanted = MergedVPN.shared.wanted
+                    self.vpnConnected = MergedVPN.shared.connected
+                    self.vpnStatus = MergedVPN.shared.statusText
                 }
             }
             .store(in: &cancellables)
@@ -196,8 +214,10 @@ final class AppModel: ObservableObject, @unchecked Sendable {
             ne.disableAndRemoveConfig()
         } else {
             ne.refreshStatus()
-            ne.autoStartIfConfigured()
+            // 只有总开关开着才恢复连接；功能开关不再负责拉起隧道
+            MergedVPN.shared.restore()
         }
+        syncFeatureFlags()
         wg.refresh()
         wgDraft = wg.activeConfig ?? WGConfig()
         ts.refresh()
@@ -253,13 +273,18 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         let configKey = "\(snapshotRules.count)|\(snapshotRules.first?.pattern ?? "")"
         let neDisabledByEnv = ProcessInfo.processInfo.environment["SDP_NE_OFF"] == "1"
         if engine.state == "connected", !neDisabledByEnv, snapshotRules.count > 10, configKey != lastNEConfigKey {
-            // 策略表加载完成后才下发扩展配置，避免用内置规则（错误 resid）启动
+            // 策略表加载完成后才刷新扩展配置，避免用内置规则（错误 resid）启动。
+            // 只更新配置，不擅自改功能开关，也不重新激活扩展。
             lastNEConfigKey = configKey
-            ne.enable(config: buildNEConfig())
+            if MergedTunnel.shared.isEnabled("sdp") {
+                MergedTunnel.shared.set("sdp", enabled: true, config: buildNEConfig())
+                MergedVPN.shared.applyFeatures()
+            }
         }
         if engine.state != "connected" {
+            // 只重置配置指纹；登录状态不该动「是否启用 SDP 功能」这个用户选择。
+            // 连不连网由 VPN 总开关决定。
             lastNEConfigKey = ""
-            if ne.active { ne.disable() }   // 未登录时隧道开关必须关闭
         }
 
         let snapshot = engine.store.snapshot()
@@ -327,8 +352,22 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         return true
     }
 
+    /// VPN 总开关：只管连不连网，不动三个功能各自的启用状态
+    func toggleVPN() {
+        MergedVPN.shared.setWanted(!MergedVPN.shared.wanted)
+    }
+
+    /// 页面开关的唯一真相是 MergedTunnel.features，与隧道连没连无关
+    func syncFeatureFlags() {
+        neActive = MergedTunnel.shared.isEnabled("sdp")
+        wgActive = MergedTunnel.shared.isEnabled("wg")
+        tsActive = MergedTunnel.shared.isEnabled("ts")
+    }
+
+    /// 页面开关：只登记 WireGuard 是否参与这条隧道。
+    /// 总开关关着时不会连网；开着时由 configureAndStart 热重连应用新配置。
     func toggleWG() {
-        if wg.active {
+        if MergedTunnel.shared.isEnabled("wg") {
             wg.disable()
         } else {
             if wgDraft.valid { wg.upsert(wgDraft) }
@@ -336,8 +375,10 @@ final class AppModel: ObservableObject, @unchecked Sendable {
                 wgError = "请先填写或导入 WireGuard 配置"
                 return
             }
-            wg.enable()
+            MergedTunnel.shared.set("wg", enabled: true)
+            wg.configureAndStart()
         }
+        syncFeatureFlags()
     }
 
     // MARK: - Tailscale
@@ -369,7 +410,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     }
 
     func toggleTS() {
-        if ts.active {
+        if MergedTunnel.shared.isEnabled("ts") {
             ts.disable()
         } else {
             if tsDraft.valid { ts.upsert(tsDraft) }
@@ -377,8 +418,10 @@ final class AppModel: ObservableObject, @unchecked Sendable {
                 tsError = "请先填写 Tailscale 配置（Control URL）"
                 return
             }
-            ts.enable()
+            MergedTunnel.shared.set("ts", enabled: true)
+            ts.configureAndStart()
         }
+        syncFeatureFlags()
     }
 
     func openTSLogin() { ts.openLoginPage() }
@@ -391,11 +434,13 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     func activateWGExtension() { wg.enable() }
 
     func toggleNE() {
-        if ne.active {
+        if MergedTunnel.shared.isEnabled("sdp") {
             ne.disable()
         } else {
-            ne.enable(config: buildNEConfig())
+            MergedTunnel.shared.set("sdp", enabled: true, config: buildNEConfig())
+            ne.configureAndStart()
         }
+        syncFeatureFlags()
     }
 
     /// 构建 Packet Tunnel 配置：token/网关/策略/路由

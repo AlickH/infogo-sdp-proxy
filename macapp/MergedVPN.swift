@@ -1,0 +1,228 @@
+import Foundation
+import NetworkExtension
+import SystemExtensions
+import Combine
+
+/// 合并后的 **VPN 总开关**。
+///
+/// 三隧道合并后只有一条 `NETunnelProviderManager`，所以「连不连网」必须是
+/// 一个独立开关；三个页面里的开关只决定「本功能是否参与这条隧道」
+/// （`MergedTunnel.features`），不再负责启动/停止 VPN。
+///
+/// - 总开关开：确保扩展已激活 → 保存 providerConfiguration → 建立隧道
+/// - 总开关关：只 stop 隧道，保留配置和三个功能的启用状态
+/// - 功能开关变化：`applyFeatures()` 在隧道连着时热重连，没连时什么都不做
+/// 所有可变状态（wanted / connected / statusText / manager）都在主队列上读写：
+/// 偏好设置的回调统一 `DispatchQueue.main.async` 回抛，扩展激活回调也由系统在主队列
+/// 派发，因此 @unchecked Sendable 成立（Swift 6 要求静态单例可发送）。
+final class MergedVPN: NSObject, ObservableObject, OSSystemExtensionRequestDelegate, @unchecked Sendable {
+    static let shared = MergedVPN()
+
+    static let extensionID = "com.alick.sdp-proxy.ne"
+    private static let wantedKey = "sdp.merged.vpnWanted"
+
+    /// 总开关状态（持久化，App 重启后据此自动恢复）
+    @Published private(set) var wanted: Bool
+    /// 隧道是否真的连上（NEVPNStatus）
+    @Published private(set) var connected = false
+    @Published private(set) var statusText = "未连接"
+
+    private var manager: NETunnelProviderManager?
+    private var observer: NSObjectProtocol?
+
+    override init() {
+        if UserDefaults.standard.object(forKey: Self.wantedKey) == nil {
+            // 老版本没有总开关：隧道连着就视为「开」，避免升级后开关与现状不符
+            wanted = true
+        } else {
+            wanted = UserDefaults.standard.bool(forKey: Self.wantedKey)
+        }
+        super.init()
+        observer = NotificationCenter.default.addObserver(
+            forName: .NEVPNStatusDidChange, object: nil, queue: .main
+        ) { [weak self] _ in self?.syncStatus() }
+        refresh()
+    }
+
+    deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+
+    // MARK: - 对外
+
+    /// App 启动时调用：总开关开着则恢复连接，关着则确保隧道确实停掉
+    /// （VPN 连接会跨 App 重启保留，只刷新状态会留下「开关关、隧道却连着」）
+    func restore() {
+        wanted ? start() : stop()
+    }
+
+    func setWanted(_ value: Bool) {
+        wanted = value
+        UserDefaults.standard.set(value, forKey: Self.wantedKey)
+        if value { start() } else { stop() }
+    }
+
+    /// 功能开关变化后调用：连着就重推配置，没连就等下次 start() 自然带上
+    func applyFeatures() {
+        guard wanted else { return }
+        reload()
+    }
+
+    // MARK: - 连接管理
+
+    // MARK: - 诊断
+
+    private func note(_ text: String) {
+        let line = "\(ISO8601DateFormatter().string(from: Date())) \(text)\n"
+        let path = "/tmp/sdpvpn.log"
+        if let h = FileHandle(forWritingAtPath: path) {
+            h.seekToEndOfFile(); h.write(Data(line.utf8)); h.closeFile()
+        } else {
+            try? Data(line.utf8).write(to: URL(fileURLWithPath: path))
+        }
+    }
+
+    private func start() {
+        note("start() wanted=\(wanted)")
+        refresh { [weak self] existing in
+            guard let self else { return }
+            if existing == nil {
+                // 首次使用：先请求激活系统扩展，激活完成后再建隧道
+                note("无已保存 VPN 配置 -> 请求激活扩展")
+                let req = OSSystemExtensionRequest.activationRequest(
+                    forExtensionWithIdentifier: Self.extensionID, queue: .main)
+                req.delegate = self
+                OSSystemExtensionManager.shared.submitRequest(req)
+                statusText = "正在激活系统扩展…"
+            } else {
+                note("已有 VPN 配置 -> reload")
+                reload()
+            }
+        }
+    }
+
+    private func stop() {
+        note("stop() 总开关关闭")
+        // 可能还没加载过 manager，先加载再停，避免漏掉已存在的连接
+        refresh { mgr in mgr?.connection.stopVPNTunnel() }
+        syncStatus()
+        statusText = "已断开"
+    }
+
+    /// 把 MergedTunnel 里最新的 features + 三份配置写进 VPN 配置并启动/重启隧道
+    private func reload() {
+        refresh { [weak self] existing in
+            guard let self else { return }
+            let mgr = existing ?? NETunnelProviderManager()
+            let proto = (mgr.protocolConfiguration as? NETunnelProviderProtocol)
+                ?? NETunnelProviderProtocol()
+            proto.providerBundleIdentifier = Self.extensionID
+            proto.serverAddress = "SDP"
+            proto.providerConfiguration = MergedTunnel.shared.providerConfiguration()
+            mgr.protocolConfiguration = proto
+            mgr.localizedDescription = "SDP"
+            mgr.isEnabled = true
+            manager = mgr
+            mgr.saveToPreferences { [weak self] error in
+                guard let self else { return }
+                if let error {
+                    note("saveToPreferences 失败: \(error.localizedDescription)")
+                    statusText = "配置保存失败：\(error.localizedDescription)"
+                    return
+                }
+                note("配置已保存 features=\(MergedTunnel.shared.features.sorted())")
+                mgr.loadFromPreferences { [weak self] loadError in
+                    guard let self else { return }
+                    if let loadError { note("loadFromPreferences 失败: \(loadError.localizedDescription)") }
+                    self.connect(mgr)
+                }
+            }
+        }
+    }
+
+    private func connect(_ mgr: NETunnelProviderManager) {
+        let status = mgr.connection.status
+        note("connect() status=\(status.rawValue) wanted=\(wanted) enabled=\(mgr.isEnabled)")
+        if status == .connected || status == .connecting {
+            mgr.connection.stopVPNTunnel()
+            nonisolated(unsafe) let target = mgr
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                guard self?.wanted == true else { return }
+                do { try target.connection.startVPNTunnel(); self?.note("重启成功") }
+                catch { self?.note("重启失败: \(error.localizedDescription)") }
+            }
+        } else if wanted {
+            do { try mgr.connection.startVPNTunnel(); note("启动成功") }
+            catch { note("启动失败: \(error.localizedDescription)") }
+        }
+        statusText = "正在连接…"
+        syncStatus()
+    }
+
+    private func refresh(completion: ((NETunnelProviderManager?) -> Void)? = nil) {
+        NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, _ in
+            let found = managers?.first {
+                ($0.protocolConfiguration as? NETunnelProviderProtocol)?
+                    .providerBundleIdentifier == Self.extensionID
+            }
+            // Swift 6：NETunnelProviderManager 非 Sendable，显式放行跨闭包传递
+            nonisolated(unsafe) let unsafeFound = found
+            nonisolated(unsafe) let done = completion
+            DispatchQueue.main.async {
+                self?.manager = unsafeFound
+                self?.syncStatus()
+                done?(unsafeFound)
+            }
+        }
+    }
+
+    private func syncStatus() {
+        let status = manager?.connection.status ?? .invalid
+        let wasConnected = connected
+        connected = status == .connected
+        if wanted {
+            switch status {
+            case .connected: statusText = "已连接"
+            case .connecting, .reasserting: statusText = "正在连接…"
+            case .disconnecting: statusText = "正在断开…"
+            case .disconnected, .invalid: statusText = "未连接"
+            @unknown default: statusText = "未知"
+            }
+        }
+        if wasConnected != connected {
+            // 三个页面的状态文本也跟着刷新一次
+            NotificationCenter.default.post(name: .mergedVPNStatusChanged, object: nil)
+        }
+    }
+
+    // MARK: - OSSystemExtensionRequestDelegate
+
+    func request(_ request: OSSystemExtensionRequest,
+                 actionForReplacingExtension existing: OSSystemExtensionProperties,
+                 withExtension ext: OSSystemExtensionProperties) -> OSSystemExtensionRequest.ReplacementAction {
+        .replace
+    }
+
+    func requestNeedsUserApproval(_ request: OSSystemExtensionRequest) {
+        statusText = "等待系统批准扩展…"
+    }
+
+    func request(_ request: OSSystemExtensionRequest,
+                 didFinishWithResult result: OSSystemExtensionRequest.Result) {
+        switch result {
+        case .willCompleteAfterReboot:
+            note("扩展需重启后生效")
+            statusText = "扩展需重启后生效"
+        default:
+            note("扩展激活完成 -> reload")
+            reload()
+        }
+    }
+
+    func request(_ request: OSSystemExtensionRequest, didFailWithError error: Error) {
+        note("扩展激活失败: \(error.localizedDescription)")
+        statusText = "扩展激活失败：\(error.localizedDescription)"
+    }
+}
+
+extension Notification.Name {
+    static let mergedVPNStatusChanged = Notification.Name("sdp.mergedVPNStatusChanged")
+}

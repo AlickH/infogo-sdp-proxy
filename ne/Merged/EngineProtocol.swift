@@ -34,11 +34,27 @@ struct IPPrefix {
         return addr.s_addr
     }
 
+    /// 网络字节序的 UInt32 → 点分十进制（仅用于诊断日志）
+    static func string(_ netOrder: UInt32) -> String {
+        var addr = in_addr(s_addr: netOrder)
+        var buf = [CChar](repeating: 0, count: Int(INET_ADDRSTRLEN))
+        inet_ntop(AF_INET, &addr, &buf, socklen_t(INET_ADDRSTRLEN))
+        return String(cString: buf)
+    }
+
     /// 从裸 IPv4 包里取目的地址（字节 16...19），返回值保持网络字节序
     static func destination(of packet: Data) -> UInt32? {
         guard packet.count >= 20, (packet[0] >> 4) == 4 else { return nil }
         return packet.withUnsafeBytes { raw in
             raw.loadUnaligned(fromByteOffset: 16, as: UInt32.self)
+        }
+    }
+
+    /// 源地址（字节 12...15），仅用于诊断日志
+    static func source(of packet: Data) -> UInt32? {
+        guard packet.count >= 20, (packet[0] >> 4) == 4 else { return nil }
+        return packet.withUnsafeBytes { raw in
+            raw.loadUnaligned(fromByteOffset: 12, as: UInt32.self)
         }
     }
 }

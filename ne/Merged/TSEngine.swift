@@ -74,7 +74,21 @@ final class TSEngine: TunnelEngine {
 
     func stop() { runtime.stop {} }
 
-    func deliver(_ packet: Data) { runtime.deliver(packet) }
+    func deliver(_ packet: Data) {
+        runtime.deliver(packet)
+        let seq = bumpDeliver()
+        if seq <= 12 || seq % 200 == 0 {
+            Diag.log("ts", "deliver #\(seq) \(packet.count)B")
+        }
+    }
+
+    private let seqLock = NSLock()
+    private var deliverSeq = 0
+    private func bumpDeliver() -> Int {
+        seqLock.lock(); defer { seqLock.unlock() }
+        deliverSeq += 1
+        return deliverSeq
+    }
 
     func onOutbound(_ handler: @escaping (Data) -> Void) { outbound = handler }
 
@@ -82,12 +96,37 @@ final class TSEngine: TunnelEngine {
         let cmd = String(data: message, encoding: .utf8)?
             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         switch cmd {
-        case "status": completion(runtime.statusJSON())
+        case "status":
+            let data = runtime.statusJSON()
+            Self.logStatus(data)
+            completion(data)
         case "logout": runtime.logout(); completion(Data("ok".utf8))
         case "login": runtime.loginInteractive(); completion(Data("ok".utf8))
         case "ping": completion(Data("pong".utf8))
         default: completion(nil)
         }
+    }
+
+    /// 把 tsnet 的收发字节与每个 peer 的中转/直连情况落到诊断日志。
+    /// App 每 2s 轮询一次 status，正好当采样点。
+    private static func logStatus(_ data: Data?) {
+        guard let data = data,
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            Diag.log("ts-status", "无法解析 status")
+            return
+        }
+        let state = obj["backendState"] as? String ?? "?"
+        let rx = obj["rxBytes"] as? Int ?? -1
+        let tx = obj["txBytes"] as? Int ?? -1
+        let peers = obj["peers"] as? [[String: Any]] ?? []
+        let summary = peers.prefix(4).map { p -> String in
+            let ip = p["ip"] as? String ?? "?"
+            let online = (p["online"] as? Bool ?? false) ? "on" : "off"
+            let direct = (p["direct"] as? Bool ?? false) ? "direct" : "relay"
+            let relay = p["relay"] as? String ?? ""
+            return "\(ip)/\(online)/\(direct)\(relay.isEmpty ? "" : ":\(relay)")"
+        }.joined(separator: " ")
+        Diag.log("ts-status", "\(state) rx=\(rx) tx=\(tx) peers=\(peers.count) \(summary)")
     }
 
     private static func statusDict() -> [String: Any] {

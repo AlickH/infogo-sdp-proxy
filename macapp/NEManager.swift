@@ -89,7 +89,7 @@ final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
                       ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == Self.extensionID
                   }) else { return }
             self.manager = mgr
-            if mgr.isEnabled, mgr.connection.status == .disconnected {
+            if MergedVPN.shared.wanted && mgr.isEnabled && mgr.connection.status == .disconnected {
                 try? mgr.connection.startVPNTunnel()
             }
             self.refreshStatus()
@@ -124,13 +124,16 @@ final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
                 return
             }
             self.manager = mgr
+            // 合并后三个功能共用一条隧道：连接状态只能说明「隧道在跑」，
+            // 开关是否亮起必须看 features 里有没有自己。
+            let on = MergedTunnel.shared.isEnabled("sdp")
             switch mgr.connection.status {
             case .connected:
-                self.statusText = "全局接管中"
-                self.active = true
+                self.statusText = on ? "全局接管中" : "未启用（SDP 功能已关闭）"
+                self.active = on
             case .connecting, .reasserting:
                 self.statusText = "正在启动…"
-                self.active = true
+                self.active = on
             case .disconnecting:
                 self.statusText = "正在停止…"
                 self.active = false
@@ -185,6 +188,8 @@ final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
                         self.statusText = "配置重载失败"
                         return
                     }
+                    // 总开关关着时这里只保存配置，不许偷偷把隧道拉起来
+                    guard MergedVPN.shared.wanted else { self.refreshStatus(); return }
                     // 配置变化后必须重启隧道，否则仍在用旧配置
                     if mgr.connection.status == .connected || mgr.connection.status == .connecting {
                         mgr.connection.stopVPNTunnel()
