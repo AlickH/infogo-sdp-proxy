@@ -24,7 +24,16 @@ final class WGEngine: TunnelEngine {
         set { lock.lock(); defer { lock.unlock() }; _stopped = newValue }
     }
 
+    /// 只算路由 / 地址 / DNS / MTU，供 dispatcher 在建设置前调用。
+    func prepare(config: [String: Any]) {
+        routes = (config["allowedIPs"] as? [String]) ?? []
+        addresses = (config["addresses"] as? [String]) ?? []
+        dnsServers = (config["dns"] as? [String]) ?? []
+        if let m = config["mtu"] as? Int, m >= 576 { mtu = m }
+    }
+
     func start(config: [String: Any], completion: @escaping (Error?) -> Void) {
+        prepare(config: config)
         guard let privateKeyB64 = config["privateKey"] as? String,
               let peerKeyB64 = config["peerPublicKey"] as? String,
               let privateHex = Self.hex(fromBase64: privateKeyB64),
@@ -33,17 +42,9 @@ final class WGEngine: TunnelEngine {
             return
         }
 
-        let addrs = (config["addresses"] as? [String]) ?? []
-        let dns = (config["dns"] as? [String]) ?? []
-        let allowed = (config["allowedIPs"] as? [String]) ?? []
+        let allowed = routes
         let endpoint = (config["endpoint"] as? String) ?? ""
         let keepalive = (config["persistentKeepalive"] as? Int) ?? 25
-        let cfgMTU = (config["mtu"] as? Int) ?? 1280
-
-        routes = allowed
-        addresses = addrs
-        dnsServers = dns
-        mtu = cfgMTU
 
         // UAPI：密钥 hex；**不能有空行**（IpcSetOperation 把空行当终止解析）；
         // endpoint 域名由 Tsbridge 的 wgResolveEndpoints 负责解析成 IP。

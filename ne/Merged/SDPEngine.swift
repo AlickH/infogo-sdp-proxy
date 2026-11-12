@@ -21,7 +21,7 @@ final class SDPEngine: TunnelEngine, @unchecked Sendable {
     private(set) var addresses: [String] = ["198.19.0.1/24"]
     let dnsServers: [String] = []
     let dnsMatchDomain = ""
-    let mtu = 1500
+    private(set) var mtu = 1500
 
     private var token = ""
     private var gateways: [String] = []
@@ -51,24 +51,44 @@ final class SDPEngine: TunnelEngine, @unchecked Sendable {
         }
     }
 
+    /// 配置值可能是 String / NSNumber（JSON 策略表里的 resid、ports 是数字），
+    /// 统一转成字符串，避免 `as? [[String: String]]` 这类整体转换静默失败。
+    private static func text(_ v: Any?) -> String {
+        if let s = v as? String { return s }
+        if let n = v as? NSNumber { return n.stringValue }
+        return ""
+    }
+
     // MARK: - 生命周期
 
+    /// 只算路由 / 排除网段 / MTU，供 dispatcher 在建设置前调用。
+    func prepare(config: [String: Any]) {
+        routes = (config["routes"] as? [String]) ?? []
+        excludeRoutes = (config["excludeRoutes"] as? [String]) ?? []
+        if let m = config["mtu"] as? Int, m >= 576 { mtu = m }
+    }
+
     func start(config: [String: Any], completion: @escaping (Error?) -> Void) {
+        prepare(config: config)
         token = (config["token"] as? String) ?? ""
         serverName = (config["serverName"] as? String) ?? "sdp.cscec5b.com.cn"
         gateways = (config["gateways"] as? [String]) ?? []
         directDomains = (config["directDomains"] as? [String]) ?? []
-        routes = (config["routes"] as? [String]) ?? []
-        excludeRoutes = (config["excludeRoutes"] as? [String]) ?? []
 
-        if let arr = config["rules"] as? [[String: String]] {
+        // rules 里的 resid / ports 可能来自 JSON 策略表，是数字而不是字符串；
+        // 用 [[String: String]] 整体转换时只要有一个值不是 String 就会整段返回 nil，
+        // 规则表会静默变空（表现：每个目标都 "no route ... resid="）。所以逐字段取值。
+        if let arr = config["rules"] as? [[String: Any]] {
             let parsed = arr.compactMap { d -> Rule? in
-                guard let p = d["pattern"], let r = d["resid"] else { return nil }
-                return Rule(pattern: p, resid: r, ports: d["ports"] ?? "")
+                let p = Self.text(d["pattern"])
+                let resid = Self.text(d["resid"])
+                guard !p.isEmpty, !resid.isEmpty else { return nil }
+                return Rule(pattern: p, resid: resid, ports: Self.text(d["ports"]))
             }
             store.replacePolicy(parsed)
+            log("rules=\(parsed.count)")
         }
-        log("start gateways=\(gateways) routes=\(routes.count)")
+        log("start gateways=\(gateways) routes=\(routes.count) exclude=\(excludeRoutes.count) mtu=\(mtu)")
 
         startSocks()
         startHevBridge()
@@ -113,7 +133,7 @@ final class SDPEngine: TunnelEngine, @unchecked Sendable {
         let yaml = """
         tunnel:
           name: utun0
-          mtu: 1500
+          mtu: \(mtu)
           ipv4: 198.19.0.1
           ipv6: 'fc00::1'
           icmp: 'off'

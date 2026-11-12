@@ -62,6 +62,17 @@ protocol TunnelEngine: AnyObject {
     var dnsMatchDomain: String { get }
     var mtu: Int { get }
 
+    /// 只解析配置、把 `routes` / `excludeRoutes` / `addresses` / `dnsServers` / `mtu`
+    /// 算出来，**不启动任何数据面**（不开 socket、不连网关、不建隧道）。
+    ///
+    /// 必须由 `MergedProvider` 在 `PacketDispatcher.register()` 与
+    /// `buildSettings()` **之前**调用：这两个方法读的就是这些属性。
+    /// 若等到 `start()` 才填充，`includedRoutes` 会是空数组——而 macOS 把
+    /// 「空的 includedRoutes」当成「接管全部 IPv4 流量」，会装上默认路由，
+    /// 连扩展自己要用的网关地址也一起吸进隧道（`excludeRoutes` 同样还是空的），
+    /// 表现就是隧道显示已连接、但所有流量出不去。
+    func prepare(config: [String: Any])
+
     /// 启动引擎；完成时所有后台读写循环都应已就绪
     func start(config: [String: Any], completion: @escaping (Error?) -> Void)
 
@@ -76,8 +87,16 @@ protocol TunnelEngine: AnyObject {
 
     /// App 侧发来的控制消息（status / login / logout 等）
     func handleMessage(_ message: Data, completion: @escaping (Data?) -> Void)
+
+    /// 引擎在运行中发现地址 / 路由变化时调用。
+    ///
+    /// 目前只有 Tailscale 需要：`start()` 时控制面还没下发地址，只能用占位
+    /// `100.64.0.254`；登录/连上之后才有真实 `100.x.y.z`，那时必须重建设置，
+    /// 否则真实地址永远进不了 utun，回包会被内核丢掉。默认实现是空操作。
+    func setNetworkChangeHandler(_ handler: @escaping () -> Void)
 }
 
 extension TunnelEngine {
     var excludeRoutes: [String] { [] }
+    func setNetworkChangeHandler(_ handler: @escaping () -> Void) {}
 }

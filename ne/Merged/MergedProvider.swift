@@ -24,11 +24,37 @@ final class MergedProvider: NEPacketTunnelProvider {
         }
         engines = engineList
 
+        // 先把三份配置摊平，再让每个引擎「只算路由、不起数据面」。
+        // 顺序很关键：PacketDispatcher 的分类表和 buildSettings() 读的就是
+        // prepare 填进去的 routes / excludeRoutes / addresses / DNS。
+        // 若等到 start() 才填，includedRoutes 会是空数组，而 macOS 把
+        // 「空 includedRoutes」当成「接管全部 IPv4 流量」，会装上默认路由，
+        // 连 SDP 自己的网关地址（本该在 excludeRoutes 里）也一起吸进隧道，
+        // 结果就是隧道显示已连接、三路流量全部出不去。
+        var built: [String: [String: Any]] = [:]
+        for name in ["sdp", "wg", "ts"] {
+            built[name] = (cfg[name] as? [String: Any]) ?? [:]
+        }
+        let configs = built
+        for engine in engineList {
+            engine.prepare(config: configs[engine.name] ?? [:])
+        }
+        NSLog("[Merged] 路由规划 %@",
+              engineList.map { "\($0.name)=\($0.routes.count)/排除\($0.excludeRoutes.count)" }
+                  .joined(separator: " "))
+
         let d = PacketDispatcher(flow: packetFlow)
         // SDP 是规则兜底：未按任何前缀命中时交给它（未启用则为 nil，包直接丢弃）
         let fallback = engineList.first { $0.name == "sdp" }
         d.register(engineList, fallback: fallback)
         dispatcher = d
+
+        // Tailscale 登录后才会拿到真实 100.x 地址，那时引擎会回调这里重建设置
+        for engine in engineList {
+            engine.setNetworkChangeHandler { [weak self] in
+                self?.reapplySettings(configs: configs)
+            }
+        }
 
         // 必须先建立虚拟网卡，再启动引擎的读写循环
         let settings = d.buildSettings()
@@ -39,16 +65,13 @@ final class MergedProvider: NEPacketTunnelProvider {
                 completionHandler(error)
                 return
             }
-            var configs: [String: [String: Any]] = [:]
-            for name in ["sdp", "wg", "ts"] {
-                configs[name] = (cfg[name] as? [String: Any]) ?? [:]
-            }
             d.start(configs: configs) { startError in
                 if let startError = startError {
                     NSLog("[Merged] 引擎启动失败: %@", startError.localizedDescription)
                 } else {
-                    NSLog("[Merged] 全部引擎已就绪 routes=%@",
-                          engineList.flatMap(\.routes).joined(separator: ","))
+                    NSLog("[Merged] 全部引擎已就绪 %@",
+                          engineList.map { "\($0.name)=\($0.routes.count)路由" }
+                              .joined(separator: " "))
                 }
                 completionHandler(startError)
             }
@@ -70,6 +93,28 @@ final class MergedProvider: NEPacketTunnelProvider {
         dispatcher = nil
         engines = []
         completionHandler()
+    }
+
+    // MARK: - 运行中重建设置
+
+    /// 引擎报告的地址/路由变化（Tailscale 拿到真实 100.x 之后）→ 重新规划 + 重下发。
+    /// 只更新网络设置，不重启引擎、不重建 flow。
+    private func reapplySettings(configs: [String: [String: Any]]) {
+        guard let d = dispatcher else { return }
+        let list = engines
+        for engine in list {
+            engine.prepare(config: configs[engine.name] ?? [:])
+        }
+        let settings = d.buildSettings()
+        setTunnelNetworkSettings(settings) { error in
+            if let error = error {
+                NSLog("[Merged] 更新网络设置失败: %@", error.localizedDescription)
+            } else {
+                NSLog("[Merged] 网络设置已更新 %@",
+                      list.map { "\($0.name)=\($0.addresses.count)地址/\($0.routes.count)路由" }
+                          .joined(separator: " "))
+            }
+        }
     }
 
     // MARK: - 构建

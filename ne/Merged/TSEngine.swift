@@ -21,31 +21,55 @@ final class TSEngine: TunnelEngine {
 
     private let runtime: TSBridgeRuntime
     private var outbound: ((Data) -> Void)?
+    private var networkChange: (() -> Void)?
+    private var lastConfig: [String: Any] = [:]
 
-    /// 合并后由 dispatcher 统一管网络设置，这里不需要真的下发；
-    /// 但 TSBridgeRuntime 内部会用这个回调判断「设置是否应用成功」，必须回 nil。
-    private var noopApply: (NEPacketTunnelNetworkSettings, @escaping (Error?) -> Void) -> Void {
-        { _, done in done(nil) }
+    /// 合并后网络设置由 dispatcher 统一管，这里不自己下发；但 TSBridgeRuntime
+    /// 内部会用这个回调判断「设置是否应用成功」，必须回 nil。
+    ///
+    /// 登录后控制面下发真实 100.x 地址时它会**再次**回调——这时重新读一遍
+    /// status 刷新 routes/addresses，并通知 MergedProvider 重建设置。不这么做
+    /// 的话 utun 上只剩占位 100.64.0.254，真实地址的回包会被内核丢掉。
+    private var refreshApply: (NEPacketTunnelNetworkSettings, @escaping (Error?) -> Void) -> Void {
+        { [weak self] _, done in
+            guard let self = self else { done(nil); return }
+            self.prepare(config: self.lastConfig)
+            NSLog("[TS-Engine] 地址变更 -> 重新规划 addresses=%@ routes=%@",
+                  self.addresses.joined(separator: ","), self.routes.joined(separator: ","))
+            self.networkChange?()
+            done(nil)
+        }
+    }
+
+    func setNetworkChangeHandler(_ handler: @escaping () -> Void) {
+        networkChange = handler
     }
 
     init(packetFlow: NEPacketTunnelFlow) {
         self.runtime = TSBridgeRuntime(packetFlow: packetFlow, ownsFlow: false)
     }
 
-    func start(config: [String: Any], completion: @escaping (Error?) -> Void) {
+    /// 只算路由 / 地址 / DNS / MTU，供 dispatcher 在建设置前调用。
+    /// 地址来自 `TsbridgeStatus()` 的 selfIPs——那是上一次控制面留下的状态，
+    /// 所以在起数据面之前就能拿到，不需要等 start()。
+    func prepare(config: [String: Any]) {
         let status = Self.statusDict()
         let ips = (status["selfIPs"] as? [String])?.filter { !$0.contains(":") } ?? []
-        let suffix = (status["tailnet"] as? String) ?? ""
         let acceptDNS = config["acceptDNS"] as? Bool ?? true
 
         routes = (config["routes"] as? [String])?.filter { !$0.isEmpty } ?? ["100.64.0.0/10"]
         addresses = ips.isEmpty ? ["100.64.0.254/32"] : ips.map { $0 + "/32" }
         dnsServers = acceptDNS ? ["100.100.100.100"] : []
-        dnsMatchDomain = suffix
-        mtu = (config["mtu"] as? Int) ?? 1280
+        dnsMatchDomain = (status["tailnet"] as? String) ?? ""
+        if let m = config["mtu"] as? Int, m >= 576 { mtu = m }
+    }
+
+    func start(config: [String: Any], completion: @escaping (Error?) -> Void) {
+        lastConfig = config
+        prepare(config: config)
 
         runtime.setOutboundHandler { [weak self] packet in self?.outbound?(packet) }
-        runtime.start(configuration: config, applySettings: noopApply, completion: completion)
+        runtime.start(configuration: config, applySettings: refreshApply, completion: completion)
     }
 
     func stop() { runtime.stop {} }
