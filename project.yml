@@ -124,12 +124,6 @@ targets:
     sources:
       - path: ne/main.swift
       - path: ne/WGProvider.swift
-      - path: ne/wg_bridge.h
-      - path: Vendor/wireguard-apple/Sources/WireGuardKit
-      - path: Vendor/wireguard-apple/Sources/WireGuardKitC/key.c
-      - path: Vendor/wireguard-apple/Sources/WireGuardKitC/x25519.c
-      - path: Vendor/wireguard-apple/Sources/WireGuardKitGo/libwg-go.a
-        build: false   # 仅出现在工程导航器；实际由 -lwg-go 链接（见 LIBRARY_SEARCH_PATHS）
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.alick.sdp-proxy.wg
@@ -143,17 +137,14 @@ targets:
         INFOPLIST_FILE: ne/Info-WG.plist
         CODE_SIGN_ENTITLEMENTS: ne/WGNE.entitlements
         PROVISIONING_PROFILE_SPECIFIER: "SDP Proxy WG Developer ID v2"
-        SWIFT_OBJC_BRIDGING_HEADER: ne/wg_bridge.h
-        HEADER_SEARCH_PATHS:
-          - "ne"
-          - "Vendor/wireguard-apple/Sources/WireGuardKitC"
-          - "Vendor/wireguard-apple/Sources/WireGuardKitGo"
-        OTHER_CFLAGS: ["-I Vendor/wireguard-apple/Sources/WireGuardKitC"]
-        # WireGuardKitGo 的 modulemap 带 `link "wg-go"`（autolink），故需提供库搜索路径
-        LIBRARY_SEARCH_PATHS:
+        # wireguard-go 改由 wgbridge 提供（内存 tun.Device），
+        # 不再链接 Vendor/wireguard-apple 的 libwg-go.a + WireGuardKit，
+        # 避免两份 wireguard-go 符号冲突。
+        # 产物由 scripts/build-wgbridge.sh 生成（已 gitignore）。
+        FRAMEWORK_SEARCH_PATHS:
           - "$(inherited)"
-          - "Vendor/wireguard-apple/Sources/WireGuardKitGo"
-        OTHER_LDFLAGS: ["-lwg-go", "-framework NetworkExtension", "-framework Network", "-framework Foundation", "-framework Security"]
+          - "Vendor/Wgbridge.xcframework/macos-arm64_x86_64"
+        OTHER_LDFLAGS: ["-framework Wgbridge", "-framework NetworkExtension", "-framework Network", "-framework Foundation", "-framework Security"]
         ENABLE_HARDENED_RUNTIME: "YES"
 
   # ---------------------------------------------------------------------------

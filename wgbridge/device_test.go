@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,7 +88,7 @@ func randomKey() string {
 func TestStartStopWithUAPI(t *testing.T) {
 	uapi := "private_key=" + randomKey() + "\n" +
 		"listen_port=0\n" +
-		"\n" +
+		// 注意：不能插空行，IpcSetOperation 遇到空行就结束解析
 		"public_key=" + randomKey() + "\n" +
 		"allowed_ip=10.0.0.0/24\n" +
 		"endpoint=127.0.0.1:51820\n"
@@ -95,13 +96,37 @@ func TestStartStopWithUAPI(t *testing.T) {
 	if err := Start(uapi); err != nil {
 		t.Fatalf("Start 失败: %v", err)
 	}
-	if got := Status(); got == "" {
+	gotStatus := Status()
+	if gotStatus == "" {
 		t.Fatal("Status 为空，设备可能没真正起来")
+	}
+	if !bytes.Contains([]byte(gotStatus), []byte("public_key=")) {
+		t.Fatalf("peer 没被创建（UAPI 里可能混入了空行）:\n%s", gotStatus)
 	}
 	if err := Stop(); err != nil {
 		t.Fatalf("Stop 失败: %v", err)
 	}
 	if got := Status(); got != "" {
 		t.Fatal("Stop 后 Status 应为空")
+	}
+}
+
+func TestResolveEndpoints(t *testing.T) {
+	in := "private_key=abc\nendpoint=1.2.3.4:51820\nallowed_ip=10.0.0.0/24\n"
+	got, err := resolveEndpoints(in)
+	if err != nil {
+		t.Fatalf("字面量 IP 不该报错: %v", err)
+	}
+	if got != in {
+		t.Fatalf("字面量 IP 被改写了:\n%s", got)
+	}
+
+	got2, err := resolveEndpoints("endpoint=localhost:51820\n")
+	if err != nil {
+		t.Fatalf("localhost 解析失败: %v", err)
+	}
+	if !strings.Contains(got2, "endpoint=127.0.0.1:51820") &&
+		!strings.Contains(got2, "endpoint=[::1]:51820") {
+		t.Fatalf("localhost 没有被解析成 IP: %q", got2)
 	}
 }

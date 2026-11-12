@@ -6,6 +6,8 @@ package wgbridge
 import (
 	"fmt"
 	"log"
+	"net"
+	"strings"
 	"sync"
 
 	"golang.zx2c4.com/wireguard/conn"
@@ -49,6 +51,10 @@ func Start(uapi string) error {
 		},
 	}
 
+	uapi, err := resolveEndpoints(uapi)
+	if err != nil {
+		return err
+	}
 	dev = device.NewDevice(d, conn.NewStdNetBind(), logger)
 	if err := dev.IpcSet(uapi); err != nil {
 		dev.Close()
@@ -58,6 +64,52 @@ func Start(uapi string) error {
 	dev.Up()
 	logf("[wg] 设备已启动")
 	return nil
+}
+
+// resolveEndpoints 把 UAPI 里 `endpoint=域名:端口` 的域名预先解析成 IP。
+//
+// wireguard-go 的 StdNetBind.ParseEndpoint 内部是 netip.ParseAddrPort，
+// **只接受 IP 字面量**，传域名会报
+//
+//	`ParseAddr("663407.xyz"): IPv4 field has value >255`。
+//
+// 原来的 WireGuardKit 是在 Swift 侧用 DNSResolver 先解析好再拼 UAPI 的，
+// 换到 wgbridge 之后这步没人做，所以在这里补上等价逻辑。
+//
+// 优先选 IPv4（当前 WG 配置都是 IPv4 endpoint）。
+// 局限：不会像 WireGuardKit 那样在网络切换时重新解析 DDNS，后续可加定时重解析。
+func resolveEndpoints(uapi string) (string, error) {
+	lines := strings.Split(uapi, "\n")
+	for i, line := range lines {
+		if !strings.HasPrefix(line, "endpoint=") {
+			continue
+		}
+		hostPort := strings.TrimPrefix(line, "endpoint=")
+		host, port, err := net.SplitHostPort(hostPort)
+		if err != nil || net.ParseIP(host) != nil {
+			continue
+		}
+		ips, err := net.LookupIP(host)
+		if err != nil {
+			return "", fmt.Errorf("wgbridge: 解析 endpoint %q 失败: %w", host, err)
+		}
+		var chosen net.IP
+		for _, ip := range ips {
+			if ip.To4() != nil {
+				chosen = ip
+				break
+			}
+		}
+		if chosen == nil && len(ips) > 0 {
+			chosen = ips[0]
+		}
+		if chosen == nil {
+			return "", fmt.Errorf("wgbridge: endpoint %q 没有解析结果", host)
+		}
+		lines[i] = "endpoint=" + net.JoinHostPort(chosen.String(), port)
+		logf("[wg] endpoint %s → %s", hostPort, lines[i])
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 // Stop 关闭设备并丢弃内存队列。

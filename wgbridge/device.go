@@ -114,12 +114,13 @@ func (d *packetDevice) Write(buf []byte, offset int) (int, error) {
 	}
 }
 
-func (d *packetDevice) File() *os.File             { return nil }
-func (d *packetDevice) MTU() (int, error)          { return tunnelMTU, nil }
-func (d *packetDevice) Name() (string, error)      { return "sdp-wireguard", nil }
-func (d *packetDevice) Events() <-chan tun.Event   { return d.events }
+func (d *packetDevice) File() *os.File           { return nil }
+func (d *packetDevice) MTU() (int, error)        { return tunnelMTU, nil }
+func (d *packetDevice) Name() (string, error)    { return "sdp-wireguard", nil }
+func (d *packetDevice) Events() <-chan tun.Event { return d.events }
+
 // Flush 在批量写之后被调用；内存队列是即写即入，无需额外动作。
-func (d *packetDevice) Flush() error               { return nil }
+func (d *packetDevice) Flush() error { return nil }
 
 func (d *packetDevice) Close() error {
 	d.once.Do(func() {

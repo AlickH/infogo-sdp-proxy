@@ -388,6 +388,7 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     func relocateTS() { ts.relocateToApplications() }
     func resetTSRecords() { ts.resetExtensionRecords() }
     func activateTSExtension() { ts.enable() }
+    func activateWGExtension() { wg.enable() }
 
     func toggleNE() {
         if ne.active {
@@ -492,6 +493,12 @@ final class SDPAppDelegate: NSObject, NSApplicationDelegate {
         if args.contains("--ts-activate") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                 AppModel.shared?.activateTSExtension()
+            }
+            return
+        }
+        if args.contains("--wg-activate") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                AppModel.shared?.activateWGExtension()
             }
             return
         }
