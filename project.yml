@@ -89,7 +89,9 @@ targets:
       - path: ne/main.swift
       - path: ne/Provider.swift
       - path: ne/bridge.h
-      # 合并用的分类器/引擎协议，先挂在这里参与编译验证，暂不接入运行时
+      - path: Tools/TSBridgeRuntime.swift
+      - path: ne/TSProvider.swift
+      # 合并用的分类器与三个引擎适配层；先挂在这里参与编译验证，暂不接入运行时
       - path: ne/Merged
       - path: macapp/Core/RuleStore.swift
       - path: macapp/Core/RuleText.swift
@@ -114,7 +116,13 @@ targets:
         SWIFT_OBJC_BRIDGING_HEADER: ne/bridge.h
         HEADER_SEARCH_PATHS: ["ne", "third_party/hev/lib"]
         LIBRARY_SEARCH_PATHS: ["third_party/hev/lib"]
-        OTHER_LDFLAGS: ["-lhev-socks5-tunnel", "-lhev-task-system", "-llwip", "-lyaml", "-framework NetworkExtension", "-framework Network", "-framework Security"]
+        OTHER_LDFLAGS: ["-lhev-socks5-tunnel", "-lhev-task-system", "-llwip", "-lyaml", "-framework NetworkExtension", "-framework Network", "-framework Security", "-framework Wgbridge", "-framework Tsbridge"]
+        # 两个 Go 桥接框架的静态切片目录
+        FRAMEWORK_SEARCH_PATHS:
+          - "$(inherited)"
+          - "Vendor/Wgbridge.xcframework/macos-arm64_x86_64"
+          - "Vendor/Tsbridge.xcframework/macos-arm64_x86_64"
+        OTHER_SWIFT_FLAGS: ["-D", "TS_HAS_BRIDGE"]
         ENABLE_HARDENED_RUNTIME: "YES"
 
   # ---------------------------------------------------------------------------

@@ -22,6 +22,10 @@ import Tsbridge
 /// ```
 final class TSBridgeRuntime: TailscaleRuntime {
     private let flow: NEPacketTunnelFlow
+    /// true = 独立扩展模式，自己驱动 packetFlow；
+    /// false = 合并模式，包由 PacketDispatcher 通过 deliver()/setOutboundHandler() 搬运。
+    private let ownsFlow: Bool
+    private var outboundHandler: ((Data) -> Void)?
     private let lock = NSLock()
     private var _stopped = false
     private var stopped: Bool {
@@ -42,8 +46,22 @@ final class TSBridgeRuntime: TailscaleRuntime {
     /// 正在提交真实设置（避免每 2s 的 status 轮询重复提交）
     private var upgrading = false
 
-    init(packetFlow: NEPacketTunnelFlow) {
+    init(packetFlow: NEPacketTunnelFlow, ownsFlow: Bool = true) {
         self.flow = packetFlow
+        self.ownsFlow = ownsFlow
+    }
+
+    /// 合并模式：OS → 引擎
+    func deliver(_ packet: Data) {
+        var err: NSError?
+        if !TsbridgeDeliverInboundPacket(packet, &err) {
+            NSLog("[TS] inbound 丢包: %@", err?.localizedDescription ?? "closed")
+        }
+    }
+
+    /// 合并模式：注册「引擎 → OS」回调
+    func setOutboundHandler(_ handler: @escaping (Data) -> Void) {
+        outboundHandler = handler
     }
 
     func start(configuration: [String: Any],
@@ -162,6 +180,8 @@ final class TSBridgeRuntime: TailscaleRuntime {
     }
 
     private func startPacketLoops() {
+        // 合并模式下 OS→Go 由 dispatcher 调 deliver()，这里不注册 readPackets
+        if ownsFlow {
         // OS → Go：每次回调后重新注册 readPackets，形成持续读取循环
         func pump() {
             flow.readPackets { [weak self] packets, _ in
@@ -177,6 +197,7 @@ final class TSBridgeRuntime: TailscaleRuntime {
             }
         }
         pump()
+        }
 
         // Go → OS：阻塞读取 Go 侧 Write 产出的包并写回虚拟网卡
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -188,7 +209,11 @@ final class TSBridgeRuntime: TailscaleRuntime {
                 // 裸 IP 包首字节高 4 位：4 = IPv4, 6 = IPv6
                 let version = (bytes.first ?? 0) >> 4
                 let af: NSNumber = version == 6 ? 30 : 2   // AF_INET6 = 30, AF_INET = 2
-                self.flow.writePackets([bytes], withProtocols: [af])
+                if self.ownsFlow {
+                    self.flow.writePackets([bytes], withProtocols: [af])
+                } else {
+                    self.outboundHandler?(bytes)
+                }
             }
         }
     }
