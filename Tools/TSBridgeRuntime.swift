@@ -226,13 +226,31 @@ final class TSBridgeRuntime: TailscaleRuntime {
         var errorDescription: String? { "TSBridgeRuntime: 配置序列化失败" }
     }
 
+    /// 系统扩展以 root 运行时的固定数据目录。
+    ///
+    /// 不能用 `containerURL(forSecurityApplicationGroupIdentifier:)`——App Group 容器
+    /// 只对 App 沙盒上下文有效，在系统扩展进程里返回 **nil**，之前退化成
+    /// `NSTemporaryDirectory()`，临时目录被系统清理后节点就掉登录、必须重新授权。
+    /// 这里和 `SharedToken` 一样走机器级固定路径（扩展以 root 运行，可写）。
+    private static let dataDir = URL(fileURLWithPath: "/Library/Application Support/SDPProxy",
+                                     isDirectory: true)
+
+    private static func ensureDataDir() -> URL {
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: dataDir.path) {
+            try? fm.createDirectory(at: dataDir, withIntermediateDirectories: true,
+                                    attributes: [.posixPermissions: 0o755])
+        }
+        // 目录可能由旧版本以 0700 建出来，这里每次都纠正一次，
+        // 保证诊断日志可读；含私钥的 tsnet/ 子目录仍单独收紧到 0700。
+        try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dataDir.path)
+        return dataDir
+    }
+
     /// 诊断日志：系统扩展里的 NSLog 在统一日志里看不到（被 NE 过滤），
-    /// 所以把关键状态追加写进 App Group 容器，方便从 shell 直接查看。
+    /// 所以把关键状态追加写进固定目录，方便从 shell 直接查看。
     static func diag(_ msg: String) {
-        let group = "KLU8GF65GP.com.alick.sdp-proxy"
-        guard let base = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: group) else { return }
-        let url = base.appendingPathComponent("ts-diag.log")
+        let url = ensureDataDir().appendingPathComponent("ts-diag.log")
         let line = ISO8601DateFormatter().string(from: Date()) + "  " + msg + "\n"
         guard let data = line.data(using: .utf8) else { return }
         if let h = try? FileHandle(forWritingTo: url) {
@@ -241,16 +259,40 @@ final class TSBridgeRuntime: TailscaleRuntime {
             _ = try? h.write(contentsOf: data)
         } else {
             try? data.write(to: url)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o644],
+                                                   ofItemAtPath: url.path)
         }
     }
 
     private static func stateDir() -> String {
-        let group = "KLU8GF65GP.com.alick.sdp-proxy"
-        if let url = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: group) {
-            return url.appendingPathComponent("tsnet", isDirectory: true).path
+        let dst = ensureDataDir().appendingPathComponent("tsnet", isDirectory: true)
+        migrateLegacyStateIfNeeded(to: dst)
+        try? FileManager.default.createDirectory(at: dst, withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        return dst.path
+    }
+
+    /// 老版本把 tsnet 状态放在 `NSTemporaryDirectory()/sdp-tsnet`。
+    /// 首次升级到新路径时搬一次，避免用户被迫重新登录。
+    private static func migrateLegacyStateIfNeeded(to dst: URL) {
+        let fm = FileManager.default
+        // 目标已有内容就不动
+        if let existing = try? fm.contentsOfDirectory(atPath: dst.path), !existing.isEmpty {
+            return
         }
-        return NSTemporaryDirectory() + "sdp-tsnet"
+        let legacy = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("sdp-tsnet", isDirectory: true)
+        guard fm.fileExists(atPath: legacy.path),
+              let files = try? fm.contentsOfDirectory(atPath: legacy.path),
+              !files.isEmpty else { return }
+        try? fm.createDirectory(at: dst, withIntermediateDirectories: true,
+                                attributes: [.posixPermissions: 0o700])
+        for f in files {
+            let src = legacy.appendingPathComponent(f)
+            let out = dst.appendingPathComponent(f)
+            try? fm.copyItem(at: src, to: out)
+        }
+        diag("已从 \(legacy.path) 迁移 tsnet 状态（\(files.count) 项）")
     }
 
     /// MagicDNS 后缀，例如 `tailc12e.ts.net`（未登录时为空）
