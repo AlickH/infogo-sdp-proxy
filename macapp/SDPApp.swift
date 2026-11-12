@@ -399,6 +399,21 @@ final class AppModel: ObservableObject, @unchecked Sendable {
     }
 
     /// 构建 Packet Tunnel 配置：token/网关/策略/路由
+    /// 一次性迁移到合并隧道：清理旧配置后，顺序下发三份配置。
+    /// 每次 configureAndStart 都会保存并重启隧道，最后一次配置才完整。
+    /// 之后正常启动靠 UserDefaults 里持久化的 features + 已保存的 providerConfiguration。
+    func setupMergedAllFeatures() {
+        let cfg = buildNEConfig()
+        MergedTunnel.shared.set("sdp", enabled: true, config: cfg)
+        ne.enable(config: cfg)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+            self?.wg.configureAndStart()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
+                self?.ts.configureAndStart()
+            }
+        }
+    }
+
     func buildNEConfig() -> [String: Any] {
         let snapshot = engine.store.snapshot()
         var rules: [[String: String]] = []
@@ -483,6 +498,12 @@ final class SDPAppDelegate: NSObject, NSApplicationDelegate {
     /// 方便脚本化安装/排障（等价于在面板里点一次「登录 Tailscale」）。
     func applicationDidFinishLaunching(_ notification: Notification) {
         let args = CommandLine.arguments
+        if args.contains("--merged-setup") {
+            MergedTunnel.cleanupLegacyConfigs {
+                AppModel.shared?.setupMergedAllFeatures()
+            }
+            return
+        }
         if args.contains("--ts-reset-ext") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
                 AppModel.shared?.resetTSRecords()

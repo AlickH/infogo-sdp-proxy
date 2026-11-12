@@ -63,7 +63,9 @@ final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
     func disableAndRemoveConfig(completion: @escaping () -> Void = {}) {
         NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, _ in
             guard let self = self else { completion(); return }
-            let mgr = managers?.first
+            let mgr = managers?.first(where: {
+                ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == Self.extensionID
+            })
             mgr?.connection.stopVPNTunnel()
             mgr?.isEnabled = false
             mgr?.saveToPreferences { _ in
@@ -82,7 +84,10 @@ final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
     /// 已保存过配置时，App 启动后自动恢复透明代理
     func autoStartIfConfigured() {
         NETunnelProviderManager.loadAllFromPreferences { [weak self] managers, _ in
-            guard let self = self, let mgr = managers?.first else { return }
+            guard let self = self,
+                  let mgr = managers?.first(where: {
+                      ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == Self.extensionID
+                  }) else { return }
             self.manager = mgr
             if mgr.isEnabled, mgr.connection.status == .disconnected {
                 try? mgr.connection.startVPNTunnel()
@@ -111,7 +116,9 @@ final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
                 self.lastError = error.localizedDescription
                 return
             }
-            guard let mgr = managers?.first else {
+            guard let mgr = managers?.first(where: {
+                ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == Self.extensionID
+            }) else {
                 self.statusText = "未启用"
                 self.active = false
                 return
@@ -137,7 +144,7 @@ final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func configureAndStart() {
+    func configureAndStart() {
         if configuring { return }
         guard !pendingConfig.isEmpty else {
             statusText = "缺少隧道配置"
@@ -152,7 +159,9 @@ final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
                 self.statusText = "配置读取失败"
                 return
             }
-            let mgr = managers?.first ?? NETunnelProviderManager()
+            let mgr = managers?.first(where: {
+                ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier == Self.extensionID
+            }) ?? NETunnelProviderManager()
             self.manager = mgr
             let proto = NETunnelProviderProtocol()
             proto.providerBundleIdentifier = Self.extensionID

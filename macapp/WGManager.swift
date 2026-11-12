@@ -370,7 +370,7 @@ final class WGManager: NSObject, ObservableObject, @unchecked Sendable {
         }
     }
 
-    private func configureAndStart() {
+    func configureAndStart() {
         guard let cfg = activeConfig, cfg.valid else {
             log("配置无效：需要 PrivateKey / PublicKey / Endpoint")
             statusText = "扩展已安装，请填写或导入配置"

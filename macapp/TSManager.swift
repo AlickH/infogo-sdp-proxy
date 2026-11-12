@@ -580,7 +580,7 @@ final class TSManager: NSObject, ObservableObject, @unchecked Sendable {
 
     // MARK: - VPN 配置下发
 
-    private func configureAndStart() {
+    func configureAndStart() {
         guard let cfg = activeConfig, cfg.valid else {
             log("配置无效：需要合法的 Control URL")
             statusText = "扩展已安装，请填写配置"

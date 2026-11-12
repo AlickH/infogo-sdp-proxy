@@ -66,6 +66,29 @@ final class MergedTunnel: @unchecked Sendable {
         ]
     }
 
+    /// 迁移：删掉旧架构里 .wg / .ts 两条 VPN 配置。
+    /// 合并后它们的扩展二进制已不在 App 里，留着会和新隧道抢路由、且永远连不上。
+    static func cleanupLegacyConfigs(completion: @escaping @MainActor () -> Void) {
+        let legacy: Set<String> = ["com.alick.sdp-proxy.wg", "com.alick.sdp-proxy.ts"]
+        NETunnelProviderManager.loadAllFromPreferences { managers, _ in
+            let doomed = (managers ?? []).filter {
+                guard let bid = ($0.protocolConfiguration as? NETunnelProviderProtocol)?.providerBundleIdentifier
+                else { return false }
+                return legacy.contains(bid)
+            }
+            let group = DispatchGroup()
+            for m in doomed {
+                group.enter()
+                m.connection.stopVPNTunnel()
+                m.removeFromPreferences { _ in group.leave() }
+            }
+            group.notify(queue: .main) {
+                NSLog("[Merged] 已清理 %d 条旧 VPN 配置", doomed.count)
+                Task { @MainActor in completion() }
+            }
+        }
+    }
+
     /// 把三个 Manager 各自的状态轮询消息路由到对应引擎。
     /// MergedProvider 的 PacketDispatcher 按 `name:` 前缀分发。
     static func command(_ engine: String, _ body: String = "status") -> Data {
