@@ -10,13 +10,7 @@ struct MenuBarContent: View {
             tabBar.padding(.bottom, 10)
             header.padding(.bottom, 10)
             Divider()
-            Group {
-                if model.tab == .sdp {
-                    sdpTab
-                } else {
-                    wireGuardTab
-                }
-            }
+            currentTab
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.top, 10)
             logsPane
@@ -27,13 +21,30 @@ struct MenuBarContent: View {
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    @ViewBuilder
+    private var currentTab: some View {
+        switch model.tab {
+        case .sdp: sdpTab
+        case .wireguard: wireGuardTab
+        case .tailscale: tailscaleTab
+        }
+    }
+
+    private var headerTitle: String {
+        switch model.tab {
+        case .sdp: return "SDP 代理"
+        case .wireguard: return "WireGuard"
+        case .tailscale: return "Tailscale"
+        }
+    }
+
     // MARK: - 头部
 
     private var header: some View {
         HStack(alignment: .center, spacing: 8) {
             headerIcon
             HStack(spacing: 6) {
-                Text(model.tab == .sdp ? "SDP 代理" : "WireGuard")
+                Text(headerTitle)
                     .font(.system(size: 15, weight: .semibold))
                 Text(headerBadgeText)
                     .font(.system(size: 10, weight: .medium))
@@ -72,6 +83,20 @@ struct MenuBarContent: View {
                         showWGSheet = true
                     }
                 }
+                if model.tab == .tailscale {
+                    if !model.tsNeedsRelocation,
+                       model.tsBackendState == "NeedsLogin" || !model.tsLoginURL.isEmpty {
+                        iconButton(model.tsLoginURL.isEmpty ? "person.badge.key" : "safari",
+                                   help: model.tsLoginURL.isEmpty ? "登录 Tailscale" : "打开 Tailscale 登录链接",
+                                   visible: true) {
+                            if model.tsLoginURL.isEmpty { model.loginTS() } else { model.openTSLogin() }
+                        }
+                    }
+                    iconButton("plus", help: "新建配置", visible: true) {
+                        model.newTSConfigDraft()
+                        showTSSheet = true
+                    }
+                }
                 iconButton("doc.text", help: "日志", visible: true, active: showLogsPane) {
                     withAnimation(.snappy(duration: 0.24)) {
                         showResources = false
@@ -81,7 +106,7 @@ struct MenuBarContent: View {
                     if showLogsPane {
                         // 动画结束后再刷新内容，避免刷新打断高度动画
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.28) {
-                            model.syncFromEngine(); model.syncWGLogs()
+                            model.syncLogsForCurrentTab()
                         }
                     }
                 }
@@ -129,14 +154,18 @@ struct MenuBarContent: View {
 
     @ViewBuilder
     private var headerIcon: some View {
-        if model.tab == .sdp {
+        switch model.tab {
+        case .sdp:
             let connected = model.state == "connected"
             symbolIcon(connected ? "network.badge.shield.half.filled" : "network.slash",
                        active: connected)
-        } else {
+        case .wireguard:
             symbolIcon(model.wgActive ? "point.3.filled.connected.trianglepath.dotted"
                                       : "point.3.connected.trianglepath.dotted",
                        active: model.wgActive)
+        case .tailscale:
+            symbolIcon(model.tsActive ? "link.circle.fill" : "link.circle",
+                       active: model.tsActive)
         }
     }
 
@@ -162,19 +191,32 @@ struct MenuBarContent: View {
     }
 
     private var headerBadgeText: String {
-        if model.tab == .wireguard {
+        switch model.tab {
+        case .wireguard:
             if model.wgActive { return "已连接" }
             if model.wgConfigs.isEmpty { return "无配置" }
             return "未连接"
+        case .tailscale:
+            if model.tsBackendState == "NeedsLogin" || !model.tsLoginURL.isEmpty { return "待登录" }
+            if model.tsActive { return model.tsBackendState.isEmpty ? "已连接" : model.tsBackendState }
+            if model.tsConfigs.isEmpty { return "无配置" }
+            return "未连接"
+        case .sdp:
+            return badgeText
         }
-        return badgeText
     }
 
     private var headerBadgeColor: Color {
-        if model.tab == .wireguard {
+        switch model.tab {
+        case .wireguard:
             return model.wgActive ? .green : .secondary
+        case .tailscale:
+            if model.tsBackendState == "NeedsLogin" || !model.tsLoginURL.isEmpty { return .orange }
+            if model.tsActive { return .green }
+            return .secondary
+        case .sdp:
+            return badgeColor
         }
-        return badgeColor
     }
 
     @ViewBuilder
@@ -332,6 +374,7 @@ struct MenuBarContent: View {
     // MARK: - WireGuard 标签页
 
     @State private var showWGSheet = false
+    @State private var showTSSheet = false
     @State private var showResources = false
     @State private var showLogsPane = false
 
@@ -423,11 +466,192 @@ struct MenuBarContent: View {
         }
     }
 
+    // MARK: - Tailscale 标签页
+
+    private var tailscaleTab: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
+                infoRow("状态", tsStateText)
+                infoRow("本机", model.tsSelfIP)
+                if !model.tsTailnet.isEmpty { infoRow("网络", model.tsTailnet) }
+                if !model.tsTrafficText.isEmpty { infoRow("流量", model.tsTrafficText) }
+                if model.tsNeedsRelocation {
+                    relocationCard
+                } else if model.tsBackendState == "NeedsLogin" || !model.tsLoginURL.isEmpty || !model.tsActive {
+                    loginButton
+                }
+            }
+
+            if !model.tsPeers.isEmpty {
+                Text("节点  \(model.tsPeers.count)")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                ScrollView {
+                    VStack(spacing: 1) {
+                        ForEach(model.tsPeers) { p in tsPeerRow(p) }
+                    }
+                }
+                .frame(maxHeight: 88)
+            }
+
+            if model.tsConfigs.isEmpty {
+                Text("暂无配置，点右上角 + 新建")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                    .padding(.vertical, 6)
+            } else {
+                ScrollView {
+                    VStack(spacing: 2) {
+                        ForEach(model.tsConfigs) { c in tsConfigRow(c) }
+                    }
+                }
+                .frame(maxHeight: 88)
+            }
+
+            if !model.tsError.isEmpty {
+                Text(model.tsError).font(.system(size: 10)).foregroundColor(.red).lineLimit(2)
+            }
+        }
+        .sheet(isPresented: $showTSSheet) {
+            TSEditSheet(
+                draft: $model.tsDraft,
+                onSave: {
+                    model.saveTSDraft()
+                    showTSSheet = false
+                },
+                onCancel: { showTSSheet = false }
+            )
+        }
+    }
+
+    private var tsStateText: String {
+        if model.tsNeedsRelocation { return "扩展安装失败" }
+        if !model.tsLoginURL.isEmpty { return "等待浏览器完成登录" }
+        if !model.tsBackendState.isEmpty { return model.tsBackendState }
+        return model.tsStatus
+    }
+
+    /// 一键登录按钮：点一下就开浏览器（必要时自动激活扩展、建隧道、等 AuthURL）
+    private var loginButton: some View {
+        let hasURL = !model.tsLoginURL.isEmpty
+        return Button {
+            if hasURL { model.openTSLogin() } else { model.loginTS() }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: hasURL ? "safari.fill" : "person.badge.key.fill")
+                    .font(.system(size: 11))
+                Text(hasURL ? "在浏览器中完成授权" : "登录 Tailscale")
+                    .font(.system(size: 11, weight: .medium))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
+        }
+        .buttonStyle(.borderedProminent)
+        .controlSize(.small)
+        .tint(hasURL ? .blue : .accentColor)
+    }
+
+    /// App 不在 /Applications：系统扩展激活的硬性前置条件没满足
+    private var relocationCard: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 5) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10))
+                    .foregroundColor(.red)
+                Text("App 不在「应用程序」文件夹，系统扩展无法激活")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundColor(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(TSManager.currentLocationHint)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Button {
+                model.relocateTS()
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "arrow.down.app.fill").font(.system(size: 11))
+                    Text("安装到「应用程序」并重启")
+                        .font(.system(size: 11, weight: .medium))
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 4)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(7)
+        .background(RoundedRectangle(cornerRadius: 7).fill(Color.red.opacity(0.10)))
+    }
+
+    private func tsPeerRow(_ p: TSPeer) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: p.online ? "circle.fill" : "circle")
+                .font(.system(size: 7))
+                .foregroundColor(p.online ? .green : .secondary)
+            Text(p.name.isEmpty ? p.ip : p.name)
+                .font(.system(size: 10))
+                .lineLimit(1)
+            Text(p.ip)
+                .font(.system(size: 9, design: .monospaced))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+            Spacer()
+            Text(p.direct ? "直连" : (p.online ? "中继" : "离线"))
+                .font(.system(size: 9))
+                .foregroundColor(p.direct ? .green : .secondary)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+    }
+
+    private func tsConfigRow(_ c: TSConfig) -> some View {
+        let selected = c.id == model.tsActiveID
+        return HStack(spacing: 6) {
+            Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 10))
+                .foregroundColor(selected ? .accentColor : .secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(c.displayName).font(.system(size: 11))
+                Text("\(c.controlURL) · \(c.loginMode)")
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button {
+                model.editTSDraft(c.id)
+                showTSSheet = true
+            } label: {
+                Image(systemName: "pencil").font(.system(size: 10))
+            }
+            .buttonStyle(.borderless)
+            .help("编辑配置")
+            Button {
+                model.selectTS(c.id)
+                model.deleteActiveTS()
+            } label: {
+                Image(systemName: "trash").font(.system(size: 10))
+            }
+            .buttonStyle(.borderless)
+            .help("删除配置")
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(selected ? Color.accentColor.opacity(0.10) : Color.clear)
+        .clipShape(RoundedRectangle(cornerRadius: 5))
+        .contentShape(Rectangle())
+        .onTapGesture { model.selectTS(c.id) }
+    }
+
     // MARK: - 底部开关（固定面板底部）
 
     @ViewBuilder
     private var footerSwitch: some View {
-        if model.tab == .sdp {
+        switch model.tab {
+        case .sdp:
             if model.state == "connected" {
                 Divider().padding(.top, 10)
                 HStack(spacing: 6) {
@@ -446,7 +670,7 @@ struct MenuBarContent: View {
                 }
                 .padding(.top, 10)
             }
-        } else {
+        case .wireguard:
             Divider().padding(.top, 10)
             HStack(spacing: 6) {
                 Text("连接").font(.system(size: 11))
@@ -461,19 +685,53 @@ struct MenuBarContent: View {
                 .disabled(model.wgConfigs.isEmpty)
             }
             .padding(.top, 10)
+        case .tailscale:
+            Divider().padding(.top, 10)
+            HStack(spacing: 6) {
+                Text("连接").font(.system(size: 11))
+                Text(model.tsActive ? "100.64.0.0/10" : "Tailscale mesh")
+                    .font(.system(size: 10))
+                    .foregroundColor(.secondary)
+                Spacer()
+                if model.tsActive {
+                    Button("退出登录") { model.logoutTS() }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 10))
+                }
+                Toggle("", isOn: Binding(
+                    get: { model.tsActive },
+                    set: { _ in model.toggleTS() }
+                ))
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .controlSize(.small)
+            }
+            .padding(.top, 10)
         }
     }
 
     // MARK: - 底部窗格
 
     private var logText: String {
-        model.tab == .wireguard ? model.wgLogsText : model.logsText
+        switch model.tab {
+        case .sdp: return model.logsText
+        case .wireguard: return model.wgLogsText
+        case .tailscale: return model.tsLogsText
+        }
+    }
+
+    private var logsTitle: String {
+        switch model.tab {
+        case .sdp: return "运行日志"
+        case .wireguard: return "WireGuard 日志"
+        case .tailscale: return "Tailscale 日志"
+        }
     }
 
     private var logsPane: some View {
         ExpandablePane(
             expanded: showLogsPane,
-            title: model.tab == .wireguard ? "WireGuard 日志" : "运行日志",
+            title: logsTitle,
             onClose: {
                 withAnimation(.snappy(duration: 0.24)) {
                     showLogsPane = false
@@ -632,6 +890,57 @@ struct WGEditSheet: View {
         HStack(spacing: 6) {
             Text(label).font(.system(size: 10)).foregroundColor(.secondary)
                 .frame(width: 70, alignment: .leading)
+            TextField(placeholder, text: value)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 10, design: .monospaced))
+        }
+    }
+}
+
+// MARK: - Tailscale 配置编辑 Sheet
+
+struct TSEditSheet: View {
+    @Binding var draft: TSConfig
+    var onSave: () -> Void
+    var onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Tailscale 配置").font(.system(size: 13, weight: .semibold))
+            field("显示名称", $draft.name, placeholder: "列表里展示的名字")
+            field("Control URL", $draft.controlURL, placeholder: "https://controlplane.tailscale.com")
+            field("Auth Key", $draft.authKey, placeholder: "留空则交互式登录（tskey-...）")
+            field("设备名", $draft.hostname, placeholder: "留空使用本机名")
+            field("捕获路由", $draft.routes, placeholder: "100.64.0.0/10")
+            field("广播子网", $draft.advertiseRoutes, placeholder: "10.0.0.0/24, 192.168.1.0/24")
+            field("Exit Node", $draft.exitNode, placeholder: "节点名或 IP，可留空")
+            field("MTU", $draft.mtu, placeholder: "1280")
+            Group {
+                Toggle("使用 MagicDNS", isOn: $draft.acceptDNS)
+                Toggle("接受子网路由", isOn: $draft.acceptRoutes)
+                Toggle("Shield incoming connections", isOn: $draft.shieldIncoming)
+                Toggle("按需连接（On-Demand，Ethernet / Wi-Fi 自动连接）", isOn: $draft.onDemand)
+            }
+            .toggleStyle(.checkbox)
+            .font(.system(size: 10))
+            Text("Control URL 可指向自建 Headscale；Auth Key 留空时，连接后需在浏览器完成 SSO 登录。")
+                .font(.system(size: 9))
+                .foregroundColor(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("取消") { onCancel() }
+                Button("保存") { onSave() }
+            }
+        }
+        .frame(width: 420)
+        .padding(4)
+    }
+
+    private func field(_ label: String, _ value: Binding<String>, placeholder: String = "") -> some View {
+        HStack(spacing: 6) {
+            Text(label).font(.system(size: 10)).foregroundColor(.secondary)
+                .frame(width: 88, alignment: .leading)
             TextField(placeholder, text: value)
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 10, design: .monospaced))

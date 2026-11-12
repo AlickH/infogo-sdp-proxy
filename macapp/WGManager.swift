@@ -61,7 +61,8 @@ struct WGStore: Codable {
 }
 
 /// WireGuard 系统扩展管理（Packet Tunnel），支持多配置
-final class WGManager: NSObject, ObservableObject {
+/// `@unchecked Sendable`：NE 的 @Sendable 回调需要捕获 self；状态仅在主队列读写。
+final class WGManager: NSObject, ObservableObject, @unchecked Sendable {
     static let extensionID = "com.alick.sdp-proxy.wg"
     static var configPath: String { NSHomeDirectory() + "/.sdp-proxy/wireguard.json" }
 
@@ -318,9 +319,11 @@ final class WGManager: NSObject, ObservableObject {
     private func scheduleRefresh() {
         if refreshScheduled { return }
         refreshScheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.refreshScheduled = false
-            self?.refresh()
+        // Swift 6：@Sendable 闭包不能直接捕获非 Sendable 的 self，这里保留弱引用语义
+        nonisolated(unsafe) weak var me = self
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            me?.refreshScheduled = false
+            me?.refresh()
         }
     }
 
@@ -415,8 +418,10 @@ final class WGManager: NSObject, ObservableObject {
                     }
                     if mgr.connection.status == .connected || mgr.connection.status == .connecting {
                         mgr.connection.stopVPNTunnel()
+                        // Swift 6：manager 非 Sendable，显式放行跨闭包传递
+                        nonisolated(unsafe) let manager = mgr
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                            do { try mgr.connection.startVPNTunnel(); self.statusText = "正在连接…" }
+                            do { try manager.connection.startVPNTunnel(); self.statusText = "正在连接…" }
                             catch { self.error = error.localizedDescription; self.statusText = "启动失败" }
                         }
                     } else {

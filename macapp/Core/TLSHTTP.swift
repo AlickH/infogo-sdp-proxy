@@ -105,28 +105,18 @@ enum TLSHTTP {
 
     private static func waitReady(_ conn: NWConnection, timeout: TimeInterval) async throws {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            var done = false
-            let lock = NSLock()
-            func finish(_ result: Result<Void, Error>) {
-                lock.lock(); defer { lock.unlock() }
-                if done { return }
-                done = true
-                switch result {
-                case .success: cont.resume()
-                case .failure(let e): cont.resume(throwing: e)
-                }
-            }
+            let once = ResumeOnce()
             conn.stateUpdateHandler = { state in
                 switch state {
-                case .ready: finish(.success(()))
-                case .failed(let e): finish(.failure(HTTPError.connect(e.localizedDescription)))
-                case .cancelled: finish(.failure(HTTPError.connect("已取消")))
+                case .ready: once.run { cont.resume() }
+                case .failed(let e): once.run { cont.resume(throwing: HTTPError.connect(e.localizedDescription)) }
+                case .cancelled: once.run { cont.resume(throwing: HTTPError.connect("已取消")) }
                 default: break
                 }
             }
             conn.start(queue: .global())
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                finish(.failure(HTTPError.timeout))
+                once.run { cont.resume(throwing: HTTPError.timeout) }
             }
         }
     }

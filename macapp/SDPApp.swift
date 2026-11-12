@@ -44,6 +44,7 @@ struct MenuBarIcon: View {
 enum PanelTab: String, CaseIterable {
     case sdp = "SDP"
     case wireguard = "WireGuard"
+    case tailscale = "Tailscale"
 }
 
 struct ResItem: Identifiable {
@@ -53,8 +54,10 @@ struct ResItem: Identifiable {
     let ports: String
 }
 
-final class AppModel: ObservableObject {
-    static weak var shared: AppModel?
+/// `@unchecked Sendable`：Engine 的回调/定时器会把 self 带进 Task；所有 @Published 更新都在主队列。
+final class AppModel: ObservableObject, @unchecked Sendable {
+    // 仅主线程读写（SwiftUI 视图生命周期内），Swift 6 下显式声明为 unsafe 全局状态
+    nonisolated(unsafe) static weak var shared: AppModel?
 
     @Published var state = "login_required"
     @Published var username = ""
@@ -72,6 +75,7 @@ final class AppModel: ObservableObject {
     let engine: Engine
     let ne = NEManager()
     let wg = WGManager()
+    let ts = TSManager()
 
     @Published var wgStatus = "未启用"
     @Published var wgActive = false
@@ -80,6 +84,22 @@ final class AppModel: ObservableObject {
     @Published var wgActiveID: UUID?
     @Published var wgDraft = WGConfig()
     @Published var wgLogsText = ""
+
+    @Published var tsStatus = "未启用"
+    @Published var tsActive = false
+    @Published var tsError = ""
+    @Published var tsConfigs: [TSConfig] = []
+    @Published var tsActiveID: UUID?
+    @Published var tsDraft = TSConfig()
+    @Published var tsLogsText = ""
+    @Published var tsBackendState = ""
+    @Published var tsSelfIP = "-"
+    @Published var tsTailnet = ""
+    @Published var tsLoginURL = ""
+    @Published var tsPeers: [TSPeer] = []
+    @Published var tsTrafficText = ""
+    @Published var tsNeedsRelocation = false
+
     @Published var tab: PanelTab = .sdp
     private let server: ProxyServer
     private var cancellables = Set<AnyCancellable>()
@@ -128,6 +148,28 @@ final class AppModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        ts.objectWillChange
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    self.tsStatus = self.ts.statusText
+                    self.tsActive = self.ts.active
+                    self.tsError = self.ts.error
+                    self.tsConfigs = self.ts.configs
+                    self.tsActiveID = self.ts.activeID
+                    self.tsLogsText = self.ts.logs.joined(separator: "\n")
+                    self.tsBackendState = self.ts.backendState
+                    self.tsSelfIP = self.ts.selfIP
+                    self.tsTailnet = self.ts.tailnet
+                    self.tsLoginURL = self.ts.loginURL
+                    self.tsPeers = self.ts.peers
+                    self.tsTrafficText = self.ts.trafficText
+                    self.tsNeedsRelocation = self.ts.needsRelocation
+                }
+            }
+            .store(in: &cancellables)
+
         server.start()
         Task { @MainActor in
             await engine.start()
@@ -145,6 +187,9 @@ final class AppModel: ObservableObject {
             if ProcessInfo.processInfo.environment["SDP_WG_AUTO"] == "1" {
                 toggleWG()
             }
+            if ProcessInfo.processInfo.environment["SDP_TS_AUTO"] == "1" {
+                toggleTS()
+            }
         }
 
         if ProcessInfo.processInfo.environment["SDP_NE_OFF"] == "1" {
@@ -155,10 +200,24 @@ final class AppModel: ObservableObject {
         }
         wg.refresh()
         wgDraft = wg.activeConfig ?? WGConfig()
+        ts.refresh()
+        tsDraft = ts.activeConfig ?? TSConfig()
     }
 
     func syncWGLogs() {
         wgLogsText = wg.logs.joined(separator: "\n")
+    }
+
+    func syncTSLogs() {
+        tsLogsText = ts.logs.joined(separator: "\n")
+    }
+
+    func syncLogsForCurrentTab() {
+        switch tab {
+        case .sdp: syncFromEngine()
+        case .wireguard: syncWGLogs()
+        case .tailscale: syncTSLogs()
+        }
     }
 
     private var syncScheduled = false
@@ -281,6 +340,55 @@ final class AppModel: ObservableObject {
         }
     }
 
+    // MARK: - Tailscale
+
+    func saveTSConfig(_ cfg: TSConfig) {
+        ts.upsert(cfg)
+    }
+
+    func saveTSDraft() {
+        ts.upsert(tsDraft)
+    }
+
+    func newTSConfigDraft() {
+        tsDraft = TSConfig()
+    }
+
+    func editTSDraft(_ id: UUID) {
+        if let c = tsConfigs.first(where: { $0.id == id }) { tsDraft = c }
+    }
+
+    func selectTS(_ id: UUID) {
+        ts.select(id)
+        if let c = ts.activeConfig { tsDraft = c }
+    }
+
+    func deleteActiveTS() {
+        ts.removeActive()
+        tsDraft = ts.activeConfig ?? TSConfig()
+    }
+
+    func toggleTS() {
+        if ts.active {
+            ts.disable()
+        } else {
+            if tsDraft.valid { ts.upsert(tsDraft) }
+            guard ts.activeConfig?.valid == true else {
+                tsError = "请先填写 Tailscale 配置（Control URL）"
+                return
+            }
+            ts.enable()
+        }
+    }
+
+    func openTSLogin() { ts.openLoginPage() }
+    func logoutTS() { ts.logout() }
+    func loginTS() { ts.login() }
+    func reloginTS() { ts.relogin() }
+    func relocateTS() { ts.relocateToApplications() }
+    func resetTSRecords() { ts.resetExtensionRecords() }
+    func activateTSExtension() { ts.enable() }
+
     func toggleNE() {
         if ne.active {
             ne.disable()
@@ -312,7 +420,8 @@ final class AppModel: ObservableObject {
         }
         // 内部网段 + 公网入口段统一捕获，域名由 SNI 还原
         routes.insert("172.30.0.0/16")
-        routes.insert("10.240.0.0/12")   // 内网 10.24x-10.25x，避免与 WireGuard 的 10.0.0.0/24 冲突
+        routes.insert("10.240.0.0/12")   // 内网 10.24x-10.25x，避开 WireGuard 的 10.0.0.0/24
+        // Tailscale 节点地址在 100.64.0.0/10（CGNAT 段），不在此捕获，三个隧道可并存
         routes.insert("122.191.10.0/24")
 
         var excludes = Set<String>(["127.0.0.1/32"])
@@ -369,6 +478,29 @@ final class AppModel: ObservableObject {
 // MARK: - 应用退出清理
 
 final class SDPAppDelegate: NSObject, NSApplicationDelegate {
+    /// 支持 `--ts-login` 启动参数：启动后直接走一遍「一键登录 Tailscale」，
+    /// 方便脚本化安装/排障（等价于在面板里点一次「登录 Tailscale」）。
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        let args = CommandLine.arguments
+        if args.contains("--ts-reset-ext") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                AppModel.shared?.resetTSRecords()
+            }
+            return
+        }
+        // 只提交一次激活请求：用于把 /Applications 里的新扩展版本推送到系统（升级）
+        if args.contains("--ts-activate") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                AppModel.shared?.activateTSExtension()
+            }
+            return
+        }
+        guard args.contains("--ts-login") else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+            AppModel.shared?.loginTS()
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
         AppModel.shared?.shutdownSynchronously()
     }

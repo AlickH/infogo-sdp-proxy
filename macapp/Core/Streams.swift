@@ -1,6 +1,23 @@
 import Foundation
 import Network
 
+/// 一次性闩：保证 continuation 只被 resume 一次。
+/// 供 `NWConnection` 的 @Sendable 回调（stateUpdateHandler / asyncAfter）共享，
+/// 避免在并发上下文中捕获非 Sendable 的可变局部状态。
+final class ResumeOnce: @unchecked Sendable {
+    private let lock = NSLock()
+    private var done = false
+
+    func run(_ body: () -> Void) {
+        lock.lock()
+        if done { lock.unlock(); return }
+        done = true
+        lock.unlock()
+        // 锁外 resume，避免持锁回调到 continuation 的恢复逻辑
+        body()
+    }
+}
+
 protocol ByteStream: AnyObject {
     func send(_ data: Data) async throws
     func receive(max: Int) async throws -> Data?
@@ -65,34 +82,31 @@ func dialDirect(host: String, port: UInt16, timeout: TimeInterval = 10) async th
 
 func waitForReady(_ conn: NWConnection, timeout: TimeInterval) async throws {
     try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-        var done = false
-        let lock = NSLock()
-        func finish(_ r: Result<Void, Error>) {
-            lock.lock(); defer { lock.unlock() }
-            if done { return }
-            done = true
-            cont.resume(with: r)
-        }
+        let once = ResumeOnce()
         conn.stateUpdateHandler = { state in
             switch state {
-            case .ready: finish(.success(()))
-            case .failed(let e): finish(.failure(GatewayError.connect(e.localizedDescription)))
-            case .cancelled: finish(.failure(GatewayError.connect("已取消")))
+            case .ready: once.run { cont.resume() }
+            case .failed(let e): once.run { cont.resume(throwing: GatewayError.connect(e.localizedDescription)) }
+            case .cancelled: once.run { cont.resume(throwing: GatewayError.connect("已取消")) }
             default: break
             }
         }
         conn.start(queue: .global())
         DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-            finish(.failure(GatewayError.connect("超时")))
+            once.run { cont.resume(throwing: GatewayError.connect("超时")) }
         }
     }
 }
 
 /// 双向转发
 func relay(_ a: ByteStream, _ b: ByteStream) async {
+    // ByteStream 是未标 Sendable 的引用类型（NWConnection 封装）。两个方向各持一端、
+    // 互不共享可变状态，故显式标注 unsafe 允许跨 Task 传递（行为不变）。
+    nonisolated(unsafe) let sa = a
+    nonisolated(unsafe) let sb = b
     await withTaskGroup(of: Void.self) { group in
-        group.addTask { await pipe(a, b) }
-        group.addTask { await pipe(b, a) }
+        group.addTask { await pipe(sa, sb) }
+        group.addTask { await pipe(sb, sa) }
         await group.waitForAll()
     }
     // 给对端一点时间把已发送的数据排空，避免 cancel 丢弃尾部数据

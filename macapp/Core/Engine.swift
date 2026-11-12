@@ -2,7 +2,10 @@ import Foundation
 import Combine
 
 /// 纯 Swift 核心引擎：登录 / 会话 / 资源策略 / 状态机
-final class Engine: ObservableObject {
+/// 主引擎：登录 / 会话 / 策略 / 代理生命周期。
+/// `@unchecked Sendable`：定时器与 async 任务需把 self 带进 Task；
+/// 所有 @Published 更新都切回主队列，符合「外部串行化」前提。
+final class Engine: ObservableObject, @unchecked Sendable {
     @Published var state = "login_required"   // login_required|scanning|checking|connected|offline
     @Published var username = ""
     @Published var logs: [String] = []
@@ -187,7 +190,7 @@ final class Engine: ObservableObject {
 
     private func startPoll(ts: Int64) async {
         pollTask?.cancel()
-        scanLock.lock(); scannedAt = nil; scanLock.unlock()
+        scanLock.withLock { scannedAt = nil }
         pollTask = Task { [weak self] in
             guard let self = self else { return }
             var currentTS = ts
@@ -203,9 +206,7 @@ final class Engine: ObservableObject {
                 }
 
                 let now = Self.nowMillis()
-                self.scanLock.lock()
-                let notified = self.scannedAt
-                self.scanLock.unlock()
+                let notified = self.scanLock.withLock { self.scannedAt }
 
                 var refresh = false
                 var reason = ""
@@ -223,7 +224,7 @@ final class Engine: ObservableObject {
                     self.refreshQRInternal()
                     currentTS = self.qrTS
                     started = now
-                    self.scanLock.lock(); self.scannedAt = nil; self.scanLock.unlock()
+                    self.scanLock.withLock { self.scannedAt = nil }
                 }
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
@@ -243,7 +244,7 @@ final class Engine: ObservableObject {
     /// QR 页面被重定向到 SDP 服务端时调用（说明已扫码）
     func onScanned() async {
         guard state == "scanning" else { return }
-        scanLock.lock(); scannedAt = Self.nowMillis(); scanLock.unlock()
+        scanLock.withLock { scannedAt = Self.nowMillis() }
         log("[扫码] 检测到扫码跳转")
     }
 

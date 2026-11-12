@@ -4,7 +4,8 @@ import SystemExtensions
 import Combine
 
 /// 系统扩展（透明代理）管理：安装 → 配置 → 启动
-final class NEManager: NSObject, ObservableObject {
+/// `@unchecked Sendable`：NE 的 @Sendable 回调需要捕获 self；本类状态仅在主队列读写。
+final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
     static let extensionID = "com.alick.sdp-proxy.ne"
 
     @Published var statusText = "未启用"
@@ -58,10 +59,12 @@ final class NEManager: NSObject, ObservableObject {
             mgr?.connection.stopVPNTunnel()
             mgr?.isEnabled = false
             mgr?.saveToPreferences { _ in
+                // Swift 6：completion 非 Sendable，显式放行（仅在主队列回调）
+                nonisolated(unsafe) let done = completion
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     self.statusText = "已禁用"
                     self.active = false
-                    completion()
+                    done()
                 }
             }
             if mgr == nil { completion() }
@@ -85,9 +88,11 @@ final class NEManager: NSObject, ObservableObject {
     private func scheduleRefresh() {
         if refreshScheduled { return }
         refreshScheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.refreshScheduled = false
-            self?.refreshStatus()
+        // Swift 6：@Sendable 闭包不能直接捕获非 Sendable 的 self，这里保留弱引用语义
+        nonisolated(unsafe) weak var me = self
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            me?.refreshScheduled = false
+            me?.refreshStatus()
         }
     }
 
@@ -163,8 +168,10 @@ final class NEManager: NSObject, ObservableObject {
                     // 配置变化后必须重启隧道，否则仍在用旧配置
                     if mgr.connection.status == .connected || mgr.connection.status == .connecting {
                         mgr.connection.stopVPNTunnel()
+                        // Swift 6：manager 非 Sendable，显式放行跨闭包传递
+                        nonisolated(unsafe) let manager = mgr
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                            do { try mgr.connection.startVPNTunnel(); self.statusText = "正在启动…" }
+                            do { try manager.connection.startVPNTunnel(); self.statusText = "正在启动…" }
                             catch { self.lastError = error.localizedDescription; self.statusText = "启动失败" }
                         }
                     } else {

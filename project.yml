@@ -1,0 +1,193 @@
+# Xcode 工程定义（由 xcodegen 生成 SDP.xcodeproj）
+# 主 App: SDP  (SwiftUI 菜单栏代理) + 3 个内嵌系统扩展: SDPNE / WGNE / TSNE
+#
+# 注意：各 target 的 Info.plist 一律「手写并由 INFOPLIST_FILE 指定」，
+# 刻意不使用 xcodegen 的 `info:` 块——它会重写 plist 文件，
+# 把系统扩展必需的 NetworkExtension / NEProviderClasses 键覆盖掉。
+name: SDP
+options:
+  bundleIdPrefix: com.alick.sdp-proxy
+  createIntermediateGroups: true
+  deploymentTarget:
+    macOS: "13.0"
+  # 系统扩展需要 Developer ID 签名；默认 Manual + 团队号，构建时由 Xcode 选证书/Profile
+  setPerTargetBuildVariables: false
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    # Swift 6 语言模式默认启用 complete 严格并发；SWIFT_STRICT_CONCURRENCY=minimal
+    # 无法压住区域隔离（RBI）检查，故源码已按 Swift 6 规范修正（ResumeOnce / @unchecked Sendable）。
+    SWIFT_STRICT_CONCURRENCY: minimal
+    MACOSX_DEPLOYMENT_TARGET: "13.0"
+    DEVELOPMENT_TEAM: KLU8GF65GP
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "Developer ID Application"
+    ENABLE_HARDENED_RUNTIME: "YES"
+    COMBINE_HIDPI_IMAGES: "YES"
+    LD_RUNPATH_SEARCH_PATHS: ["$(inherited)", "@executable_path/../Frameworks"]
+    # 公证要求：签名必须带「安全时间戳」，否则 notarytool 直接拒绝
+    # （报 "The signature does not include a secure timestamp"）。
+    # 同时系统扩展在 macOS 26+ 上也只允许「已公证」的宿主 App 激活。
+    OTHER_CODE_SIGN_FLAGS: "--timestamp"
+  configs:
+    # Release（Developer ID 分发）：不注入 get-task-allow，否则产物可被调试且无法公证
+    Release:
+      CODE_SIGN_INJECT_BASE_ENTITLEMENTS: "NO"
+
+targets:
+  # ---------------------------------------------------------------------------
+  # 主 App
+  # ---------------------------------------------------------------------------
+  SDP:
+    type: application
+    platform: macOS
+    sources:
+      - path: macapp
+        excludes:
+          - "SDP.entitlements"
+      # Icon Composer 的 .icon 直接作为资源输入。
+      # .icon 在 Xcode 内部被视作「抽象 asset catalog」（folder.iconcomposer.icon
+      # based on folder.abstractassetcatalog），actool 直接吃 .icon 目录本身，
+      # 产出带 Aqua / DarkAqua / Tintable 三套外观的 IconImageStack + 兼容用 AppIcon.icns。
+      # 切勿把它拍平成 appiconset——那会丢掉亮/暗/透明自适应。
+      - path: assets/AppIcon.icon
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.alick.sdp-proxy
+        PRODUCT_NAME: SDP
+        INFOPLIST_FILE: assets/SDP-Info.plist
+        CODE_SIGN_ENTITLEMENTS: macapp/SDP.entitlements
+        PROVISIONING_PROFILE_SPECIFIER: "SDP Proxy macOS Developer ID v4"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ENABLE_HARDENED_RUNTIME: "YES"
+        OTHER_LDFLAGS:
+          - "-framework SwiftUI"
+          - "-framework AppKit"
+          - "-framework WebKit"
+          - "-framework Network"
+          - "-framework Security"
+          - "-framework CryptoKit"
+          - "-framework NetworkExtension"
+          - "-framework SystemExtensions"
+    dependencies:
+      - target: SDPNE
+      - target: WGNE
+      - target: TSNE
+    embeddedSystemExtensions:
+      - SDPNE
+      - WGNE
+      - TSNE
+
+  # ---------------------------------------------------------------------------
+  # SDPNE: 透明代理系统扩展（基于 hev 静态库）
+  # ---------------------------------------------------------------------------
+  SDPNE:
+    type: system-extension
+    platform: macOS
+    sources:
+      - path: ne/main.swift
+      - path: ne/Provider.swift
+      - path: ne/bridge.h
+      - path: macapp/Core/RuleStore.swift
+      - path: macapp/Core/RuleText.swift
+      - path: macapp/Core/Streams.swift
+      - path: macapp/Core/SharedToken.swift
+      - path: macapp/Core/Gateway.swift
+      - path: macapp/Core/DNS.swift
+      - path: macapp/Core/Config.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.alick.sdp-proxy.ne
+        # 关键：系统扩展的 wrapper 目录名必须等于 bundle ID（<bundle-id>.systemextension），
+        # 否则 sysextd 扫不到它，会报 "Extension not found in App bundle"。
+        # 用 PRODUCT_NAME 控制 wrapper 名，EXECUTABLE_NAME / PRODUCT_MODULE_NAME
+        # 保持原名，这样 CFBundleExecutable 和 NEProviderClasses 里的模块名都不变。
+        PRODUCT_NAME: com.alick.sdp-proxy.ne
+        EXECUTABLE_NAME: SDPNE
+        PRODUCT_MODULE_NAME: SDPNE
+        INFOPLIST_FILE: ne/Info.plist
+        CODE_SIGN_ENTITLEMENTS: ne/SDPNE.entitlements
+        PROVISIONING_PROFILE_SPECIFIER: "SDP Proxy NE Developer ID v2"
+        SWIFT_OBJC_BRIDGING_HEADER: ne/bridge.h
+        HEADER_SEARCH_PATHS: ["ne", "third_party/hev/lib"]
+        LIBRARY_SEARCH_PATHS: ["third_party/hev/lib"]
+        OTHER_LDFLAGS: ["-lhev-socks5-tunnel", "-lhev-task-system", "-llwip", "-lyaml", "-framework NetworkExtension", "-framework Network", "-framework Security"]
+        ENABLE_HARDENED_RUNTIME: "YES"
+
+  # ---------------------------------------------------------------------------
+  # WGNE: WireGuard 包隧道系统扩展（WireGuardKit + libwg-go.a）
+  # ---------------------------------------------------------------------------
+  WGNE:
+    type: system-extension
+    platform: macOS
+    sources:
+      - path: ne/main.swift
+      - path: ne/WGProvider.swift
+      - path: ne/wg_bridge.h
+      - path: Vendor/wireguard-apple/Sources/WireGuardKit
+      - path: Vendor/wireguard-apple/Sources/WireGuardKitC/key.c
+      - path: Vendor/wireguard-apple/Sources/WireGuardKitC/x25519.c
+      - path: Vendor/wireguard-apple/Sources/WireGuardKitGo/libwg-go.a
+        build: false   # 仅出现在工程导航器；实际由 -lwg-go 链接（见 LIBRARY_SEARCH_PATHS）
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.alick.sdp-proxy.wg
+        # 关键：系统扩展的 wrapper 目录名必须等于 bundle ID（<bundle-id>.systemextension），
+        # 否则 sysextd 扫不到它，会报 "Extension not found in App bundle"。
+        # 用 PRODUCT_NAME 控制 wrapper 名，EXECUTABLE_NAME / PRODUCT_MODULE_NAME
+        # 保持原名，这样 CFBundleExecutable 和 NEProviderClasses 里的模块名都不变。
+        PRODUCT_NAME: com.alick.sdp-proxy.wg
+        EXECUTABLE_NAME: WGNE
+        PRODUCT_MODULE_NAME: WGNE
+        INFOPLIST_FILE: ne/Info-WG.plist
+        CODE_SIGN_ENTITLEMENTS: ne/WGNE.entitlements
+        PROVISIONING_PROFILE_SPECIFIER: "SDP Proxy WG Developer ID v2"
+        SWIFT_OBJC_BRIDGING_HEADER: ne/wg_bridge.h
+        HEADER_SEARCH_PATHS:
+          - "ne"
+          - "Vendor/wireguard-apple/Sources/WireGuardKitC"
+          - "Vendor/wireguard-apple/Sources/WireGuardKitGo"
+        OTHER_CFLAGS: ["-I Vendor/wireguard-apple/Sources/WireGuardKitC"]
+        # WireGuardKitGo 的 modulemap 带 `link "wg-go"`（autolink），故需提供库搜索路径
+        LIBRARY_SEARCH_PATHS:
+          - "$(inherited)"
+          - "Vendor/wireguard-apple/Sources/WireGuardKitGo"
+        OTHER_LDFLAGS: ["-lwg-go", "-framework NetworkExtension", "-framework Network", "-framework Foundation", "-framework Security"]
+        ENABLE_HARDENED_RUNTIME: "YES"
+
+  # ---------------------------------------------------------------------------
+  # TSNE: Tailscale 包隧道系统扩展（tsnet 引擎经 Tsbridge.xcframework 接入）
+  # 引擎：tsbridge/ 由 gomobile 编译为 Vendor/Tsbridge.xcframework
+  #       （scripts/build-tsbridge.sh；产物已 gitignore，构建前需先生成）
+  # 登录：authKey 留空时走交互式登录——扩展把 authURL 放进 status 返回，
+  #       App 侧点击按钮打开浏览器完成 SSO。
+  # ---------------------------------------------------------------------------
+  TSNE:
+    type: system-extension
+    platform: macOS
+    sources:
+      - path: ne/main.swift
+      - path: ne/TSProvider.swift
+      - path: Tools/TSBridgeRuntime.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.alick.sdp-proxy.ts
+        # 关键：系统扩展的 wrapper 目录名必须等于 bundle ID（<bundle-id>.systemextension），
+        # 否则 sysextd 扫不到它，会报 "Extension not found in App bundle"。
+        # 用 PRODUCT_NAME 控制 wrapper 名，EXECUTABLE_NAME / PRODUCT_MODULE_NAME
+        # 保持原名，这样 CFBundleExecutable 和 NEProviderClasses 里的模块名都不变。
+        PRODUCT_NAME: com.alick.sdp-proxy.ts
+        EXECUTABLE_NAME: TSNE
+        PRODUCT_MODULE_NAME: TSNE
+        INFOPLIST_FILE: ne/Info-TS.plist
+        CODE_SIGN_ENTITLEMENTS: ne/TSNE.entitlements
+        PROVISIONING_PROFILE_SPECIFIER: "SDP Proxy TS Developer ID v2"
+        # 声明已链接引擎：TSProvider 会调用 registerTailscaleRuntimeBridge()
+        OTHER_SWIFT_FLAGS: ["-D", "TS_HAS_BRIDGE"]
+        # xcframework 的静态切片目录（gomobile 产物为 universal static framework）
+        FRAMEWORK_SEARCH_PATHS:
+          - "$(inherited)"
+          - "Vendor/Tsbridge.xcframework/macos-arm64_x86_64"
+        OTHER_LDFLAGS: ["-framework Tsbridge", "-framework NetworkExtension", "-framework Network"]
+        ENABLE_HARDENED_RUNTIME: "YES"

@@ -122,16 +122,36 @@ source=Notarized Developer ID
 origin=Developer ID Application: Ning Huang (KLU8GF65GP)
 ```
 
-重新签名/公证流程：
+### 重新签名 / 公证（推荐用脚本）
+
+`scripts/sign-notarize.sh` 把「组装 → Developer ID 签名 → `asc` 公证 → staple → Gatekeeper 校验」做成一步。前置：钥匙串里有 Developer ID Application 证书、`asc` 已登录（`asc auth doctor`）、4 个 profile、主二进制。
 
 ```bash
-ID="Developer ID Application: Ning Huang (KLU8GF65GP)"
-codesign --force --options runtime --timestamp --sign "$ID" SDP.app/Contents/Resources/sdp-proxy
-codesign --force --options runtime --timestamp --sign "$ID" SDP.app
-ditto -c -k --keepParent SDP.app SDP.zip
-asc notarization submit --file SDP.zip --wait
-xcrun stapler staple SDP.app
+# 1. 准备签名描述文件（build/profiles/ 已被 .gitignore 忽略）
+mkdir -p build/profiles
+asc profiles download --id R99FD93AXJ --output build/profiles/app.provisionprofile
+asc profiles download --id 82BDZR2AF9 --output build/profiles/ne.provisionprofile
+asc profiles download --id 4KV7WHKD4H --output build/profiles/wg.provisionprofile
+asc profiles download --id 5L3R2CHW6B --output build/profiles/ts.provisionprofile
+
+# 2. 产物放到默认路径：/tmp/sdp-app-bin、/tmp/ne-build/{SDPNE,WGNE,TSNE-full}
+# 3. 一键执行
+./scripts/sign-notarize.sh
 ```
+
+脚本先检查证书 / 认证 / profile / 主二进制；**缺失的 NE 二进制会跳过并明确警告，不会放占位文件**。产物默认 `/tmp/ne-app/SDP.app`，ZIP `/tmp/ne-app/SDP.zip`。App 的 Info.plist 优先取 `dist/SDP.app/Contents/Info.plist`，否则用仓库内的 `assets/SDP-Info.plist`。
+
+`com.alick.sdp-proxy.ts` 的 bundle ID 与 Developer ID profile 用 asc 创建（已创建：`CU289A9NRU` / `5L3R2CHW6B`）：
+
+```bash
+asc bundle-ids create --identifier com.alick.sdp-proxy.ts --name "SDP Proxy Tailscale" --platform MAC_OS
+asc bundle-ids capabilities reconcile apply --bundle CU289A9NRU \
+  --entitlements ne/TSNE.entitlements --ignore-unknown --confirm
+asc profiles create --name "SDP Proxy TS Developer ID" --profile-type MAC_APP_DIRECT \
+  --bundle CU289A9NRU --certificate YDHLPTTDSR
+```
+
+> 2026-11-10 两次实测均 **Accepted**（`f6362c5b-257a-41b5-af30-a886177c38bb`、`71ab3317-98fe-4cc2-92b4-6fc087fa0f12`），staple 成功，`spctl -a -vv -t install` 返回 `accepted`。本次 bundle 只含 Tailscale 扩展（SDPNE 需 `macapp/Core` 依赖、WGNE 需 WireGuardKit，本机均无产物），**不是完整三扩展发行包**；补齐 `SDPNE_BIN` / `WGNE_BIN` 后重跑脚本即可。
 
 ## 构建
 
@@ -259,7 +279,10 @@ macapp/Core/
 swiftc -parse-as-library -O -target arm64-apple-macosx13.0 \
   -framework SwiftUI -framework Cocoa -framework WebKit \
   -framework Network -framework Security -framework CryptoKit \
-  macapp/SDPApp.swift macapp/Views.swift macapp/QRWebView.swift macapp/Core/*.swift \
+  -framework NetworkExtension -framework SystemExtensions \
+  macapp/SDPApp.swift macapp/Views.swift macapp/QRWebView.swift \
+  macapp/NEManager.swift macapp/WGManager.swift macapp/TSManager.swift \
+  macapp/Core/*.swift \
   -o SDP.app/Contents/MacOS/SDP
 ```
 
@@ -278,3 +301,140 @@ swiftc -parse-as-library -O -target arm64-apple-macosx13.0 \
   -framework AppKit -framework WebKit -framework SwiftUI \
   macapp/QRWebView.swift Tools/QRRedirectTest.swift -o /tmp/qrtest && /tmp/qrtest
 ```
+
+## macOS：Tailscale 标签页
+
+菜单栏面板新增第三个 tab **Tailscale**，与 SDP / WireGuard 并列。仅 macOS 原生 SwiftUI App 提供；Windows / Go CLI 的 Web UI 不含该 tab。
+
+### 界面
+
+| 区域 | 内容 |
+|---|---|
+| 状态 | BackendState（Running / NeedsLogin / Starting…）、本机 `100.x.y.z`、tailnet、RX/TX |
+| 登录 | 交互式登录时显示「打开登录链接」，浏览器完成 SSO 后节点自动上线 |
+| 节点 | 对端节点列表（在线 / 直连 / DERP 中继 / 离线） |
+| 配置 | 多配置列表，支持新建、编辑、删除、切换；右上角 `+` 打开编辑 Sheet |
+| 底部 | 连接开关 + 退出登录；日志按钮切换为「Tailscale 日志」 |
+
+### 配置字段
+
+| 字段 | 说明 |
+|---|---|
+| Control URL | 默认 `https://controlplane.tailscale.com`，可指向自建 Headscale |
+| Auth Key | `tskey-...` 预授权；留空则走交互式 SSO 登录 |
+| 设备名 / MTU | 自定义 hostname；MTU 默认 1280 |
+| 捕获路由 | 默认 `100.64.0.0/10`（CGNAT 段） |
+| 广播子网 | 逗号分隔 CIDR，作为 subnet router 广播 |
+| Exit Node | 节点名或 IP，可留空 |
+| MagicDNS / 接受子网路由 / Shield incoming / On-Demand | 开关 |
+
+配置持久化在 `~/.sdp-proxy/tailscale.json`，日志 `~/.sdp-proxy/tailscale.log`（2MB 滚动）。环境变量 `SDP_TS_AUTO=1` 可在启动时自动连接。
+
+### 网段隔离
+
+| 隧道 | 网段 |
+|---|---|
+| SDP NE | `172.30.0.0/16`、`10.240.0.0/12`、`122.191.10.0/24` |
+| WireGuard | 配置里的 `AllowedIPs`（常见 `10.0.0.0/24`） |
+| Tailscale | `100.64.0.0/10` |
+
+三段互不重叠，三个隧道可以同时开启而不会互相劫持。
+
+### 系统扩展（第三个）
+
+| 文件 | 作用 |
+|---|---|
+| `macapp/TSManager.swift` | 配置 / 状态 / 日志、扩展安装、`NETunnelProviderManager` 启停、`status` 轮询 |
+| `ne/TSProvider.swift` | `NEPacketTunnelProvider` 宿主层，定义 `TailscaleRuntime` 桥接协议与 `TSTunnelSettings` |
+| `ne/Info-TS.plist` | bundle `com.alick.sdp-proxy.ts`，provider class `TSNE.TSProvider` |
+| `ne/TSNE.entitlements` | packet-tunnel-provider-systemextension + App Group |
+| `scripts/build-mac-app.sh` | 组装 / 签名 `...ts.systemextension`，使用 `build/profiles/ts.provisionprofile`；启动时预检全部输入 |
+| `scripts/build-tsne.sh` | 编译 TSNE，支持 `TS_BRIDGE_SRC` + `TS_BRIDGE_FWK` 链接引擎 |
+| `scripts/build-tsbridge.sh` | 用 gomobile 把 Tailscale daemon 编译成 `Tsbridge.xcframework` |
+| `scripts/sign-notarize.sh` | 组装 / Developer ID 签名 / `asc` 公证 / staple / Gatekeeper 校验 |
+| `assets/SDP-Info.plist` | App 的 Info.plist 模板（脚本回退用） |
+| `tsbridge/bridge.go` | Go 桥接包：`tailscale.com/tsnet` → gobind 兼容的极简 API |
+| `tsbridge/packetdevice.go` | `tun.Device` 实现，注入 `tsnet.Server.Tun`，双向搬运裸 IP 包 |
+| `tsbridge/packetdevice_test.go` | 数据面契约单测（含 `-race`） |
+| `Tools/TSBridgeRuntime.swift` | 调用 `Tsbridge` framework 的 `TailscaleRuntime` 实现 |
+| `Tools/TSTunnelSelfTest.swift` | 宿主层端到端自检（40 项，无需签名/引擎/扩展上下文） |
+| `Tools/TSBridgeExample.swift` | 最小模板，仅用于验证「注入适配层」构建链路 |
+
+App 侧只通过 `sendProviderMessage` 与扩展通信，不走 HTTP：
+
+```
+Views.swift (Tailscale tab)
+  → AppModel.toggleTS() / saveTSDraft() / openTSLogin()
+  → TSManager.enable() / disable() / logout()
+  → OSSystemExtensionRequest + NETunnelProviderManager
+  → TSNE (TSProvider) ←→ Tailscale Go 引擎
+       "status"  → TSRuntimeStatus JSON（backendState / selfIPs / authURL / tailnet / peers / rxBytes / txBytes）
+       "logout"  → 清除登录态
+```
+
+### 构建依赖（gomobile / Tailscale 引擎）
+
+Tailscale 官方开源的有两块：`github.com/tailscale/tailscale`（daemon：`ipn` / `wgengine` / `cmd/tailscaled`）和 `github.com/tailscale/libtailscale`（BSD-3-Clause）。后者用 `go build -buildmode=c-archive` 产出 C 静态库 `libtailscale.a` + `tailscale.h`，其 `swift/` 目录还提供官方 **`TailscaleKit.framework`**（Xcode `make macos` 编译，含 `TailscaleNode` / `URLSession+Tailscale` / LocalAPI）。注意它**不是 gomobile**。
+
+`tailscale/ipn-go-bridge` 这个仓库不存在（404），Apple NetworkExtension 的宿主层与数据面桥接仍是闭源的。`TailscaleKit` 是进程内 userspace 嵌入式网络接口（listen / dial / URLSession 代理），仓库里没有 `NEPacketTunnelFlow` / `tun.Device` 数据面桥接，C API 也不暴露 tun 注入点。因此本项目用 `gomobile` 编译自己的 `Tsbridge.xcframework`，并利用开源 daemon 的 `tsnet.Server.Tun` 注入点（`tsnet/tsnet.go:332`）实现真正的 packet tunnel 数据面。
+
+1. 安装工具链（一次性）：
+
+   ```bash
+   go install golang.org/x/mobile/cmd/gomobile@latest
+   export PATH="$(go env GOPATH)/bin:$PATH"
+   gomobile init
+   ```
+
+2. 编译引擎 framework：
+
+   ```bash
+   ./scripts/build-tsbridge.sh
+   # 默认产物 /tmp/Tsbridge.xcframework（约 104MB，arm64 + x86_64 静态库）
+   ```
+
+   `tsbridge/` 是独立 Go module，把 `tailscale.com/tsnet` 封装成 gobind 兼容的极简 API：`TsbridgeStart / Stop / Status / Logout / LoginInteractive / Version`（状态 JSON）与 `TsbridgeDeliverInboundPacket / ReadOutboundPacket`（裸 IP 包搬运）。直接 `gomobile bind tailscale.com/tsnet` 会因多返回值方法等复杂类型报错甚至 panic，所以必须走这层封装。`packetdevice.go` 实现 `tun.Device` 并注入 `tsnet.Server.Tun`。生成的头文件在 `Tsbridge.framework/Headers/Tsbridge.objc.h`。
+
+3. 编译链接了引擎的 TSNE：
+
+   ```bash
+   TS_BRIDGE_SRC=Tools/TSBridgeRuntime.swift \
+   TS_BRIDGE_FWK=/tmp/Tsbridge.xcframework \
+     ./scripts/build-tsne.sh
+   ```
+
+   `Tools/TSBridgeRuntime.swift` 实现 `TailscaleRuntime` 并导出固定名字的 `registerTailscaleRuntimeBridge()`；脚本会加 `-D TS_HAS_BRIDGE` 与 `-framework Tsbridge`。另外两种模式：只编宿主层用 `./scripts/build-tsne.sh`，验证注入链路用 `TS_BRIDGE_SRC=Tools/TSBridgeExample.swift ./scripts/build-tsne.sh`。产物默认 `/tmp/ne-build/TSNE`，可用 `TSNE_BIN` / `TARGET` 覆盖。
+
+4. 申请 `com.alick.sdp-proxy.ts` 的 provisioning profile，放到 `build/profiles/ts.provisionprofile`。
+5. 运行 `scripts/build-mac-app.sh` 组装并签名三个扩展；脚本会先预检三个 NE 二进制与四个 profile，缺哪个会直接列出清单并退出。
+
+> **数据面已接通**：Go 侧 `tsbridge/packetdevice.go` 实现 `tun.Device` 的 8 个方法并注入 `tsnet.Server.Tun`，Swift 侧 `Tools/TSBridgeRuntime.swift` 用 `packetFlow.readPackets` → `TsbridgeDeliverInboundPacket`、`TsbridgeReadOutboundPacket` → `packetFlow.writePackets` 双向搬运**裸 IP 包**（无 utun 的 4 字节 AF 头，协议族由首字节高 4 位判定），并配置 `100.64.0.0/10` includedRoutes 与 MagicDNS。契约由 `tsbridge/packetdevice_test.go`（含 `-race`）验证。
+>
+> ⚠️ 但**尚未在真实 NetworkExtension 环境跑过**：本仓库缺签名 profile / 公证，无法安装系统扩展，包转发目前只经过编译与单元测试验证。未链接引擎时连接会明确报 `engineNotEmbedded`，不会伪装成已连接。链接 TSNE 时可能出现少量 deployment target 警告（Go runtime 对象），不影响产物。
+
+### 宿主层自检（无需签名 / 无需引擎）
+
+```bash
+swiftc -parse-as-library -target arm64-apple-macosx13.0 \
+  -framework NetworkExtension -framework Network \
+  -framework AppKit -framework SystemExtensions \
+  ne/TSProvider.swift macapp/TSManager.swift Tools/TSTunnelSelfTest.swift \
+  -o /tmp/ts-selftest && /tmp/ts-selftest
+```
+
+覆盖 41 项：CIDR→掩码、`TSTunnelSettings.build` 路由/掩码/网关/DNS/MTU、`TSConfig` / `TSStore` Codable 往返、App↔扩展 `status` JSON 契约、`TSMessageRouter` 的 `ping` / `status` / `logout` / 未知命令、缺引擎行为，以及 Mock 引擎 `start → applySettings → status → logout → stop` 全生命周期。全部 PASS 时进程返回 0。
+
+> `NEPacketTunnelProvider` 不能在非扩展环境实例化（访问其 Swift 存储属性会崩），所以消息通道逻辑抽到了独立的 `TSMessageRouter`，自检测的是它而不是直接构造 `TSProvider`。
+
+### 当前状态
+
+| 能力 | 状态 |
+|---|---|
+| Tailscale tab / 配置 / 状态轮询 / 日志 | 已完成，全量编译链接通过 |
+| TSNE 宿主层（生命周期、配置下发、消息通道） | 已完成，`build-tsne.sh` 可产出 Mach-O，自检 41/41 |
+| Tailscale Go 引擎 framework | 已完成：`build-tsbridge.sh` 产出 104MB xcframework，Swift 可链接并调用 |
+| TSNE 链接引擎编译 | 已完成：产出 23MB `TSNE-full`（arm64 Mach-O） |
+| IP 包转发（tun.Device ↔ packetFlow） | 已实现，编译 + 单测通过；**待真机 NE 环境验证** |
+| 构建输入预检 | 已具备，缺失时列清单退出 |
+| Developer ID 签名 / 公证 / staple | 已完成，`sign-notarize.sh` 实测 Accepted，Gatekeeper accepted |
+| 完整三扩展发行包 | **待补**：SDPNE / WGNE 二进制本机缺依赖，本次只签了 TSNE |

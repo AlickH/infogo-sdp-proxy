@@ -1,10 +1,20 @@
 # 构建产物
 dist/
+build/
+SDP.xcodeproj/
+/infogo-sdp-proxy
+*.xcframework
 *.exe
 *.zip
 *.app/
 *.dmg
 *.pkg
+
+# Go 构建临时目录（libwg-go 编译时产生，约 270MB）
+Vendor/wireguard-apple/Sources/WireGuardKitGo/.tmp/
+
+# 本地 AI 工具状态
+.workbuddy-ai/
 
 # Go / macOS
 .DS_Store

@@ -2,7 +2,9 @@ import Foundation
 import Network
 
 /// 本地代理服务：SOCKS5(11095) / HTTP(11096) / 规则服务(28181)
-final class ProxyServer {
+/// `@unchecked Sendable`：NWListener 的 @Sendable 回调需要把 self 带进 Task；
+/// 本类的可变状态（listener/running）只在 start/stop 中于主流程写入，符合「外部串行化」前提。
+final class ProxyServer: @unchecked Sendable {
     private let engine: Engine
     private let store: RuleStore
     private var socsListener: NWListener?
@@ -46,9 +48,11 @@ final class ProxyServer {
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
         let l = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
+        // Swift 6：newConnectionHandler 是 @Sendable，handler 本身非 Sendable；此处仅转交调用，显式放行
+        nonisolated(unsafe) let deliver = handler
         l.newConnectionHandler = { conn in
             conn.start(queue: .global())
-            handler(conn)
+            deliver(conn)
         }
         l.start(queue: .global())
         return l

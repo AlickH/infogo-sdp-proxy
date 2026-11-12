@@ -3,7 +3,12 @@ import NetworkExtension
 import Network
 import Darwin
 
-final class Provider: NEPacketTunnelProvider {
+/// 透明代理 Provider。
+/// 说明：`@unchecked Sendable` 是必需的——NWListener / DispatchSource / packetFlow 的回调
+/// 都是 @Sendable 且必须访问本实例（`running`、`bridgeFD`、`packetFlow`）。
+/// 这些字段在 `startTunnel` 里一次性写入后只读，`running` 仅作停止标志位；
+/// 所有跨队列访问都是无锁的 Bool/Int32 读取，行为与 Swift 5 模式完全一致。
+final class Provider: NEPacketTunnelProvider, @unchecked Sendable {
     private var token = ""
     private var gateways: [String] = []
     private var serverName = ""
@@ -101,6 +106,8 @@ final class Provider: NEPacketTunnelProvider {
         }
         hevFD = fds[0]
         bridgeFD = fds[1]
+        // 后台线程只能捕获 let（并发上下文禁止捕获 var）
+        let hevFDValue = fds[0]
         var sz: Int32 = 4 * 1024 * 1024
         for fd in fds {
             setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sz, socklen_t(MemoryLayout<Int32>.size))
@@ -127,7 +134,7 @@ final class Provider: NEPacketTunnelProvider {
         log("hev starting fd=\(fds[0]) bridge=\(fds[1])")
         let thread = Thread { [weak self] in
             let rc = yamlBytes.withUnsafeBufferPointer { buf in
-                hev_socks5_tunnel_main_from_str(buf.baseAddress, UInt32(buf.count), fds[0])
+                hev_socks5_tunnel_main_from_str(buf.baseAddress, UInt32(buf.count), hevFDValue)
             }
             self?.log("hev exited rc=\(rc)")
         }
@@ -261,7 +268,11 @@ final class Provider: NEPacketTunnelProvider {
             }
 
             // 上游 → 客户端
-            let back = Task { await Self.pipe(up, client, "t->c", log) }
+            // Swift 6：Task 闭包是 @Sendable；两个流各持一端、无共享可变状态，显式放行
+            nonisolated(unsafe) let upStream = up
+            nonisolated(unsafe) let clientStream = client
+            nonisolated(unsafe) let logFn = log
+            let back = Task { await Self.pipe(upStream, clientStream, "t->c", logFn) }
             if !peek.isEmpty { try await up.send(peek) }
             // 客户端 → 上游（继续读取，直到 EOF）
             await Self.pipe(client, up, "c->t", log)
@@ -383,8 +394,9 @@ final class Provider: NEPacketTunnelProvider {
     }
 }
 
-// 超时辅助
-func withTimeout<T>(_ seconds: Double, _ op: @escaping () async throws -> T?) async throws -> T? {
+// 超时辅助（Swift 6：TaskGroup 元素与闭包需满足 Sendable）
+func withTimeout<T: Sendable>(_ seconds: Double,
+                              _ op: @escaping @Sendable () async throws -> T?) async throws -> T? {
     try await withThrowingTaskGroup(of: T?.self) { group in
         group.addTask { try await op() }
         group.addTask {
