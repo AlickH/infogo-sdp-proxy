@@ -397,8 +397,12 @@ final class WGManager: NSObject, ObservableObject, @unchecked Sendable {
                 "persistentKeepalive": Int(cfg.keepalive) ?? 25,
             ]
             if let mtu = Int(cfg.mtu), mtu >= 576 { providerConfig["mtu"] = mtu }
-            // 合并后只保存一份 features 配置；WG 自己的参数放在 "wg" 子字典里
-            MergedTunnel.shared.set("wg", enabled: true, config: providerConfig)
+            // 合并后只保存一份 features 配置；WG 自己的参数放在 "wg" 子字典里。
+            // 必须跟随 shared 的当前状态：disable 路径会先清掉 enabled 再调本方法，
+            // 无条件 set(true) 会把刚关掉的功能又打开（关不掉的 bug）。
+            if MergedTunnel.shared.features.contains("wg") {
+                MergedTunnel.shared.set("wg", enabled: true, config: providerConfig)
+            }
             proto.providerConfiguration = MergedTunnel.shared.providerConfiguration()
             mgr.protocolConfiguration = proto
             mgr.localizedDescription = "SDP"

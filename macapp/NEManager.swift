@@ -146,8 +146,11 @@ final class NEManager: NSObject, ObservableObject, @unchecked Sendable {
 
     func configureAndStart() {
         if configuring { return }
-        guard !pendingConfig.isEmpty else {
-            statusText = "缺少隧道配置"
+        // 合并后任何功能启用时都需要重配并重发配置；SDP 的 config 已由 enable(config:)
+        // 写入 shared，不依赖实例变量 pendingConfig，否则 App 重启后 disable 重配会被
+        // 门槛挡住、SDP 实际关不掉。
+        guard !MergedTunnel.shared.features.isEmpty else {
+            statusText = "无启用的功能"
             return
         }
         configuring = true

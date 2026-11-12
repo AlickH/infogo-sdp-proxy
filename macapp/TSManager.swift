@@ -101,7 +101,7 @@ struct TSPeer: Decodable, Equatable, Identifiable {
     }
 }
 
-/// `TSProvider` 通过 `status` 消息返回的运行时快照（JSON）
+/// 合并后的系统扩展通过 `status` 消息返回的运行时快照（JSON）
 struct TSRuntimeStatus: Decodable {
     var backendState = ""
     var selfIPs: [String] = []
@@ -611,7 +611,11 @@ final class TSManager: NSObject, ObservableObject, @unchecked Sendable {
                 "acceptDNS": cfg.acceptDNS,
             ]
             if let mtu = Int(cfg.mtu), mtu >= 576 { providerConfig["mtu"] = mtu }
-            MergedTunnel.shared.set("ts", enabled: true, config: providerConfig)
+            // 跟随 shared 当前状态：disable 路径先清掉 enabled，无条件 set(true)
+            // 会把刚关掉的 Tailscale 又打开（关不掉的 bug）。
+            if MergedTunnel.shared.features.contains("ts") {
+                MergedTunnel.shared.set("ts", enabled: true, config: providerConfig)
+            }
             proto.providerConfiguration = MergedTunnel.shared.providerConfiguration()
             mgr.protocolConfiguration = proto
             mgr.localizedDescription = "SDP"

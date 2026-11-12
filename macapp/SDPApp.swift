@@ -406,10 +406,21 @@ final class AppModel: ObservableObject, @unchecked Sendable {
         let cfg = buildNEConfig()
         MergedTunnel.shared.set("sdp", enabled: true, config: cfg)
         ne.enable(config: cfg)
+        // 迁移要把三个开关都真正打开。WG/TS 有配置才启用；且必须在各自 configureAndStart
+        // 之前 set enabled=true，否则 configureAndStart 内的「跟随 shared 状态」逻辑不会写入
+        // 它们的 config，合并隧道只会剩下 SDP 生效。
         DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
-            self?.wg.configureAndStart()
+            guard let self = self else { return }
+            if let c = self.wg.activeConfig, c.valid {
+                MergedTunnel.shared.set("wg", enabled: true)
+            }
+            self.wg.configureAndStart()
             DispatchQueue.main.asyncAfter(deadline: .now() + 4.0) { [weak self] in
-                self?.ts.configureAndStart()
+                guard let self = self else { return }
+                if let c = self.ts.activeConfig, c.valid {
+                    MergedTunnel.shared.set("ts", enabled: true)
+                }
+                self.ts.configureAndStart()
             }
         }
     }
