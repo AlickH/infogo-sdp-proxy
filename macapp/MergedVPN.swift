@@ -127,19 +127,47 @@ final class MergedVPN: NSObject, ObservableObject, @unchecked Sendable {
         let status = mgr.connection.status
         note("connect() status=\(status.rawValue) wanted=\(wanted) enabled=\(mgr.isEnabled)")
         if status == .connected || status == .connecting {
+            // 隧道还连着：先停，等它**真的**进入 disconnected 再重启。
+            //
+            // 不能像以前那样固定等 0.8 秒——隧道拆除耗时不受控，提前 start
+            // 会撞上 neagent 侧尚未释放的会话，报：
+            //   NEAgentErrorDomain error 1
+            //   "The connection to service ... was invalidated from this process"
+            // 表现是 App 每次重启后隧道都连不上，必须手动等一会再点。
             mgr.connection.stopVPNTunnel()
-            nonisolated(unsafe) let target = mgr
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-                guard self?.wanted == true else { return }
-                do { try target.connection.startVPNTunnel(); self?.note("重启成功") }
-                catch { self?.note("重启失败: \(error.localizedDescription)") }
-            }
+            waitForDisconnectThenStart(attemptsLeft: 25)
         } else if wanted {
             do { try mgr.connection.startVPNTunnel(); note("启动成功") }
             catch { note("启动失败: \(error.localizedDescription)") }
         }
         statusText = "正在连接…"
         syncStatus()
+    }
+
+    /// 轮询等待连接进入 disconnected（每 0.2s，最多 attemptsLeft 次）后启动。
+    /// 中断时只要 wanted 变成 false 就放弃，避免用户关掉开关后又被拉起。
+    private func waitForDisconnectThenStart(attemptsLeft: Int) {
+        guard wanted else { note("等待期间总开关已关闭，放弃启动"); return }
+        // 统一用 self.manager，避免把非 Sendable 的 manager 跨闭包传递
+        guard let mgr = manager else { note("等待时 manager 已释放"); return }
+        let status = mgr.connection.status
+        if status != .disconnecting && status != .connected && status != .connecting {
+            do {
+                try mgr.connection.startVPNTunnel()
+                note("启动成功（已确认拆除，status=\(status.rawValue)）")
+            } catch {
+                note("启动失败: \(error.localizedDescription)")
+            }
+            return
+        }
+        guard attemptsLeft > 0 else {
+            note("等待隧道拆除超时（status=\(status.rawValue)），放弃启动")
+            statusText = "隧道未正常拆除，请重试"
+            return
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
+            self?.waitForDisconnectThenStart(attemptsLeft: attemptsLeft - 1)
+        }
     }
 
     private func refresh(completion: ((NETunnelProviderManager?) -> Void)? = nil) {

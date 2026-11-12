@@ -45,16 +45,21 @@ final class MergedProvider: NEPacketTunnelProvider {
                      .joined(separator: " "))
 
         // 引擎的外联目标必须解析成真实 IP 并排除出隧道。
-        // 不解析这一步的话，配置里的域名会被系统 DNS 解析（可能被别的 VPN
-        // 的假 IP 接管），解析出的地址再落进本隧道接管的网段，加密流量
-        // 就再也回不来了：表现是握手每几秒重来、rx 恒为 0。
-        let targets = engineList.flatMap(\.outboundTargets)
-        var extraExcludes: [String] = []
-        for ip in EndpointResolver.resolveHosts(targets) {
-            extraExcludes.append(ip.contains(":") ? "\(ip)/128" : "\(ip)/32")
-        }
-        Diag.log("merged", "外联目标 " + (targets.isEmpty ? "无" : targets.joined(separator: " ")) +
-                 " -> 排除 " + (extraExcludes.isEmpty ? "无" : extraExcludes.joined(separator: " ")))
+        //
+        // 依据 `NEIPv4Settings.h` 对 excludedRoutes 的定义：
+        //   "Traffic matching these routes will be routed through the current
+        //    primary physical interface of the device."
+        // 引擎自己发起的连接（SDP 网关 / WG 加密 UDP / TS controlplane）必须走这条
+        // 物理路径，否则会被本隧道重新吸回来：握手每几秒重来一次、rx 恒为 0。
+        //
+        // SystemExtension 时代系统按每条 VPN 的 serverAddress 自动做这件事，
+        // 合并成一条隧道后系统无从得知，只能在这里显式补。
+        //
+        // 注意解析只在启动时做一次并缓存：隧道起来之后系统 DNS 可能已被别的
+        // VPN（假 IP 模式）接管，那时再解析会得到 198.18.x 这类不可路由的地址，
+        // 反而把正确的排除项覆盖掉。
+        let extraExcludes = Self.resolveExcludes(for: engineList)
+        Diag.log("merged", "外联排除 " + (extraExcludes.isEmpty ? "无" : extraExcludes.joined(separator: " ")))
 
         let d = PacketDispatcher(flow: packetFlow)
         d.setExtraExcludes(extraExcludes)
@@ -124,6 +129,23 @@ final class MergedProvider: NEPacketTunnelProvider {
 
     /// 引擎报告的地址/路由变化（Tailscale 拿到真实 100.x 之后）→ 重新规划 + 重下发。
     /// 只更新网络设置，不重启引擎、不重建 flow。
+    /// 把引擎的外联目标解析成需要排除出隧道的网段。
+    ///
+    /// 返回 `p/q` 形式（IPv4 用 /32、IPv6 用 /128），交给 `PacketDispatcher`
+    /// 转成 `NEIPv4Route` 放进 `excludedRoutes`。
+    private static func resolveExcludes(for engines: [TunnelEngine]) -> [String] {
+        let targets = engines.flatMap(\.outboundTargets)
+        guard !targets.isEmpty else { return [] }
+        let ips = EndpointResolver.resolveHosts(targets)
+        var out: [String] = []
+        for ip in ips {
+            out.append(ip.contains(":") ? "\(ip)/128" : "\(ip)/32")
+        }
+        Diag.log("merged", "外联目标 " + targets.joined(separator: " ") +
+                 " -> " + (out.isEmpty ? "解析失败(不排除)" : out.joined(separator: " ")))
+        return out
+    }
+
     private func reapplySettings(configs: [String: [String: Any]]) {
         guard let d = dispatcher else { return }
         let list = engines
