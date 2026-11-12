@@ -118,5 +118,4 @@ targets:
         FRAMEWORK_SEARCH_PATHS:
           - "$(inherited)"
           - "Vendor/Tsbridge.xcframework/macos-arm64_x86_64"
-        OTHER_SWIFT_FLAGS: ["-D", "TS_HAS_BRIDGE"]
         ENABLE_HARDENED_RUNTIME: "YES"

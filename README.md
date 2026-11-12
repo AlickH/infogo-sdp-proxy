@@ -360,7 +360,7 @@ swiftc -parse-as-library -O -target arm64-apple-macosx13.0 \
 | `tsbridge/packetdevice.go` | `tun.Device` 实现，注入 `tsnet.Server.Tun`，双向搬运裸 IP 包 |
 | `tsbridge/packetdevice_test.go` | 数据面契约单测（含 `-race`） |
 | `Tools/TSBridgeRuntime.swift` | 调用 `Tsbridge` framework 的 `TailscaleRuntime` 实现 |
-| `Tools/TSTunnelSelfTest.swift` | 宿主层端到端自检（41 项，无需签名/引擎/扩展上下文） |
+| `Tools/TSTunnelSelfTest.swift` | 宿主层端到端自检（40 项，无需签名/引擎/扩展上下文） |
 
 App 侧只通过 `sendProviderMessage` 与扩展通信，不走 HTTP；三个功能共用一条隧道，
 消息用 `<engine>:` 前缀寻址：
@@ -408,7 +408,7 @@ Tailscale 官方开源的有两块：`github.com/tailscale/tailscale`（daemon�
    ```
 
    `Tools/TSBridgeRuntime.swift` 已经作为 SDPNE 的编译源挂在 `project.yml` 里，
-   `-D TS_HAS_BRIDGE` 与 `-framework Tsbridge` 也在同一处配置，不再需要单独编译
+   `-framework Tsbridge` 与 framework 搜索路径也在同一处配置，不再需要单独编译
    某个「TSNE 二进制」。三个功能由 `providerConfiguration["features"]` 决定启用哪些。
 
 4. profile 只需要两个：`build/profiles/{app,ne}.provisionprofile`
@@ -427,11 +427,12 @@ Tailscale 官方开源的有两块：`github.com/tailscale/tailscale`（daemon�
 swiftc -parse-as-library -target arm64-apple-macosx13.0 \
   -framework NetworkExtension -framework Network \
   -framework AppKit -framework SystemExtensions \
-  ne/TailscaleRuntime.swift macapp/TSManager.swift Tools/TSTunnelSelfTest.swift \
+  ne/TailscaleRuntime.swift macapp/MergedTunnel.swift \
+  macapp/TSManager.swift Tools/TSTunnelSelfTest.swift \
   -o /tmp/ts-selftest && /tmp/ts-selftest
 ```
 
-覆盖 41 项：CIDR→掩码、`TSTunnelSettings.build` 路由/掩码/网关/DNS/MTU、`TSConfig` / `TSStore` Codable 往返、App↔扩展 `status` JSON 契约、`TSMessageRouter` 的 `ping` / `status` / `logout` / 未知命令、缺引擎行为，以及 Mock 引擎 `start → applySettings → status → logout → stop` 全生命周期。全部 PASS 时进程返回 0。
+覆盖 40 项：CIDR→掩码、`TSTunnelSettings.build` 路由/掩码/网关/DNS/MTU、`TSConfig` / `TSStore` Codable 往返、App↔扩展 `status` JSON 契约、`TSMessageRouter` 的 `ping` / `status` / `logout` / 未知命令、缺引擎行为，以及 Mock 引擎 `start → applySettings → status → logout → stop` 全生命周期。全部 PASS 时进程返回 0。
 
 > `NEPacketTunnelProvider` 不能在非扩展环境实例化（访问其 Swift 存储属性会崩），所以消息通道逻辑抽到了独立的 `TSMessageRouter`，自检测的是它而不是直接构造 Provider。
 
@@ -441,7 +442,7 @@ swiftc -parse-as-library -target arm64-apple-macosx13.0 \
 |---|---|
 | 三隧道合并为单扩展（`MergedProvider` + 分类器 + 三引擎） | 已完成，`BUILD SUCCEEDED` |
 | tailnet 配置 / 状态轮询 / 日志 | 已完成 |
-| Tailscale 宿主层（生命周期、配置下发、消息通道） | 已完成，自检 41/41 |
+| Tailscale 宿主层（生命周期、配置下发、消息通道） | 已完成，自检 40/40 |
 | Tailscale Go 引擎 framework | 已完成：`build-tsbridge.sh` 产出 104MB xcframework，Swift 可链接并调用 |
 | IP 包转发（tun.Device ↔ packetFlow，经 dispatcher） | 已实现，编译 + 单测通过；**待真机 NE 环境验证** |
 | Developer ID 签名 / 公证 / staple | 已完成：单扩展发行包 Accepted，`stapler validate` 通过 |

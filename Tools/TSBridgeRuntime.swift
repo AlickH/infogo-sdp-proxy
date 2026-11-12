@@ -333,9 +333,3 @@ final class TSBridgeRuntime: TailscaleRuntime {
         return ips
     }
 }
-
-/// `build-tsne.sh` 带 `-D TS_HAS_BRIDGE` 时由 `TSBridgeSetup` 调用。
-func registerTailscaleRuntimeBridge() {
-    NSLog("[TS] 链接 Tsbridge framework: %@", TsbridgeVersion())
-    TailscaleRuntimeFactory.register { flow in TSBridgeRuntime(packetFlow: flow) }
-}

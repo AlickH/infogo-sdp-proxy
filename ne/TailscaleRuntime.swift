@@ -5,21 +5,22 @@ import Network
 /// Tailscale 引擎的桥接契约与网络设置辅助。
 ///
 /// 合并后 Tailscale 不再是独立的系统扩展，而是 `MergedProvider` 里的一个引擎
-/// （见 `Merged/TSEngine.swift`）。本文件只保留「与引擎实现解耦」所需的部分：
+/// （见 `Merged/TSEngine.swift`）：`TSEngine` 直接构造 `TSBridgeRuntime`，
+/// 具体类型在编译期就绑定好（`Vendor/Tsbridge.xcframework` 静态链接进 SDPNE）。
+/// 因此这里**不再需要运行时注册 / 工厂注入**——那套晚绑定是给旧的三扩展架构
+/// （宿主层不认识引擎、靠 `TS_BRIDGE_SRC` 在构建期插入适配层）用的。
 ///
-///   - `TailscaleRuntime` 协议：引擎要提供的最小能力集合
-///   - `TailscaleRuntimeFactory`：引擎注入点（`Tools/TSBridgeRuntime.swift` 里
-///     `registerTailscaleRuntimeBridge()` 会把真实的 Go 桥接实现注册进来）
-///   - `TSBridgeSetup`：`-D TS_HAS_BRIDGE` 时触发一次注册
+/// 本文件保留：
+///
+///   - `TailscaleRuntime` 协议：引擎的最小能力集合。生产代码里 `TSBridgeRuntime`
+///     直接实现它；同时它是 `Tools/TSTunnelSelfTest.swift` 里 Mock 引擎的接缝，
+///     用来在没有真实引擎/扩展上下文的情况下测消息路由与设置下发。
 ///   - `TSTunnelSettings`：把控制面下发的地址/路由/DNS 转成 `NEPacketTunnelNetworkSettings`
-///   - `TSMessageRouter`：App ↔ 扩展消息通道的纯逻辑层（可脱离 NE 上下文自检）
+///   - `TSMessageRouter`：App ↔ 扩展消息通道的纯逻辑层（同样服务于自检）
 ///
 /// 官方开源仓库是 `github.com/tailscale/tailscale`（`ipn` / `wgengine` /
 /// `cmd/tailscaled`）；按其开源政策，Apple 平台的 NetworkExtension 宿主层闭源，
-/// **没有官方公开的 Swift 桥接框架**，引擎适配层由构建方自行提供（本仓库是
-/// `Tools/TSBridgeRuntime.swift` + `Vendor/Tsbridge.xcframework`）。
-///
-/// 未注册时引擎会明确以 `engineNotEmbedded` 失败，不会伪装成已连接。
+/// **没有官方公开的 Swift 桥接框架**，引擎适配层由本仓库自行提供。
 /// 详见 README「Tailscale」章节。
 
 // MARK: - 引擎桥接协议
@@ -65,54 +66,6 @@ protocol TailscaleRuntime: AnyObject {
 extension TailscaleRuntime {
     /// 未实现交互式登录的适配层退化为空操作（不影响预授权 authKey 流程）
     func loginInteractive() {}
-}
-
-enum TailscaleRuntimeError: LocalizedError {
-    case invalidConfig
-    case engineNotEmbedded
-
-    var errorDescription: String? {
-        switch self {
-        case .invalidConfig:
-            return "Tailscale 配置无效（缺少合法的 Control URL）"
-        case .engineNotEmbedded:
-            return "TSNE 未链接 Tailscale 引擎：请用 TS_BRIDGE_SRC 注入 TailscaleRuntime 适配层"
-        }
-    }
-}
-
-/// 引擎实现的注入点。真实实现由 TSNE 构建目标里的适配器在启动前注册。
-final class TailscaleRuntimeFactory {
-    typealias Builder = (NEPacketTunnelFlow) -> TailscaleRuntime
-
-    private static let lock = NSLock()
-    private nonisolated(unsafe) static var builder: Builder?
-
-    static func register(_ builder: @escaping Builder) {
-        lock.lock(); defer { lock.unlock() }
-        self.builder = builder
-    }
-
-    static func make(flow: NEPacketTunnelFlow) -> TailscaleRuntime? {
-        lock.lock(); defer { lock.unlock() }
-        return builder?(flow)
-    }
-}
-
-/// 引擎适配层的注册钩子。
-/// SDPNE 目标带 `-D TS_HAS_BRIDGE`；适配层需提供全局函数
-/// `registerTailscaleRuntimeBridge()`，在其中调用 `TailscaleRuntimeFactory.register`。
-/// 静态常量保证只注册一次。
-enum TSBridgeSetup {
-    private static let once: Void = {
-        #if TS_HAS_BRIDGE
-        registerTailscaleRuntimeBridge()
-        #else
-        NSLog("[TS] 未链接 Tailscale 引擎（未提供 TailscaleRuntime 适配层）")
-        #endif
-    }()
-
-    static func registerIfNeeded() { _ = once }
 }
 
 // MARK: - 网络设置辅助

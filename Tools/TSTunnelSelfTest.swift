@@ -103,8 +103,6 @@ struct TSTunnelSelfTest {
               noEngine.handle(Data("logout".utf8)).flatMap { String(data: $0, encoding: .utf8) } == "ok")
         check("未知命令 -> nil", noEngine.handle(Data("bogus".utf8)) == nil)
         check("命令容忍首尾空白", noEngine.handle(Data("  ping \n".utf8)) != nil)
-        check("engineNotEmbedded 文案指向 TS_BRIDGE_SRC",
-              TailscaleRuntimeError.engineNotEmbedded.errorDescription?.contains("TS_BRIDGE_SRC") == true)
 
         // 6) Mock 引擎全生命周期
         print("[6] Mock 引擎 start / status / logout / stop")
